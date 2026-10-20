@@ -18,47 +18,95 @@ jobs:
       - name: Install Dependencies
         run: npm install --legacy-peer-deps --force
 
-      - name: Inject MediaSession & System Volume Integration
+      - name: Inject Audio Fixes & Dynamic Bar Integration
         run: |
-          cat << 'EOF' > inject-media.js
+          cat << 'EOF' > fix-audio-engine.js
           const fs = require('fs');
           const path = './index.html';
           if (fs.existsSync(path)) {
             let html = fs.readFileSync(path, 'utf8');
-            const mediaScript = `
+            const audioEngineScript = `
             <script>
-              // تزامن الـ MediaSession مع الـ Dynamic Island / Magic Ring
-              document.addEventListener('play', function(e) {
-                if (e.target.tagName === 'AUDIO') {
-                  const audio = e.target;
-                  audio.volume = 1.0; // توحيد الصوت مع صوت النظام
-                  if ('mediaSession' in navigator) {
-                    navigator.mediaSession.metadata = new MediaMetadata({
-                      title: document.title || 'SoundPulse Track',
-                      artist: 'SoundPulse Pro',
-                      album: 'SoundPulse Player'
-                    });
-                    navigator.mediaSession.playbackState = 'playing';
-                    navigator.mediaSession.setActionHandler('play', () => audio.play());
-                    navigator.mediaSession.setActionHandler('pause', () => audio.pause());
-                    navigator.mediaSession.setActionHandler('seekbackward', () => { audio.currentTime -= 10; });
-                    navigator.mediaSession.setActionHandler('seekforward', () => { audio.currentTime += 10; });
+              (function() {
+                // 1. منع الخرفشة والتقطيع عبر Web Audio Limiter & Compressor
+                let audioCtx = null;
+                let compressor = null;
+                let gainNode = null;
+                const hookedAudios = new WeakSet();
+
+                function setupAntiClippingEngine(audioElement) {
+                  if (hookedAudios.has(audioElement)) return;
+                  hookedAudios.add(audioElement);
+
+                  try {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    if (!AudioContext) return;
+                    if (!audioCtx) {
+                      audioCtx = new AudioContext();
+                    }
+
+                    if (audioCtx.state === 'suspended') {
+                      audioCtx.resume();
+                    }
+
+                    const source = audioCtx.createMediaElementSource(audioElement);
+                    
+                    // ضاغط ذروة رقمي احترافي لمنع الخرفشة (Limiter)
+                    compressor = audioCtx.createDynamicsCompressor();
+                    compressor.threshold.setValueAtTime(-1.5, audioCtx.currentTime);
+                    compressor.knee.setValueAtTime(4, audioCtx.currentTime);
+                    compressor.ratio.setValueAtTime(12, audioCtx.currentTime);
+                    compressor.attack.setValueAtTime(0.003, audioCtx.currentTime);
+                    compressor.release.setValueAtTime(0.25, audioCtx.currentTime);
+
+                    // موازنة معدل الصوت لمنع التشبع
+                    gainNode = audioCtx.createGain();
+                    gainNode.gain.setValueAtTime(0.92, audioCtx.currentTime);
+
+                    source.connect(compressor);
+                    compressor.connect(gainNode);
+                    gainNode.connect(audioCtx.destination);
+                  } catch (e) {
+                    console.log('Audio Engine bypass / already hooked:', e);
                   }
                 }
-              }, true);
 
-              document.addEventListener('pause', function(e) {
-                if (e.target.tagName === 'AUDIO' && 'mediaSession' in navigator) {
-                  navigator.mediaSession.playbackState = 'paused';
-                }
-              }, true);
+                // 2. تفعيل Dynamic Bar / MediaSession وتوحيد صوت النظام
+                document.addEventListener('play', function(e) {
+                  if (e.target && e.target.tagName === 'AUDIO') {
+                    const audio = e.target;
+                    audio.volume = 1.0; // توحيد مستوى الصوت مع أزرار الموبايل
+                    setupAntiClippingEngine(audio);
+
+                    if ('mediaSession' in navigator) {
+                      navigator.mediaSession.metadata = new MediaMetadata({
+                        title: document.title || 'SoundPulse Track',
+                        artist: 'SoundPulse Pro Master',
+                        album: 'Lossless Audio Player'
+                      });
+                      navigator.mediaSession.playbackState = 'playing';
+
+                      navigator.mediaSession.setActionHandler('play', () => audio.play());
+                      navigator.mediaSession.setActionHandler('pause', () => audio.pause());
+                      navigator.mediaSession.setActionHandler('seekbackward', () => { audio.currentTime = Math.max(0, audio.currentTime - 10); });
+                      navigator.mediaSession.setActionHandler('seekforward', () => { audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 10); });
+                    }
+                  }
+                }, true);
+
+                document.addEventListener('pause', function(e) {
+                  if (e.target && e.target.tagName === 'AUDIO' && 'mediaSession' in navigator) {
+                    navigator.mediaSession.playbackState = 'paused';
+                  }
+                }, true);
+              })();
             </script>
             `;
-            html = html.replace('</head>', mediaScript + '</head>');
+            html = html.replace('</head>', audioEngineScript + '\n</head>');
             fs.writeFileSync(path, html);
           }
           EOF
-          node inject-media.js
+          node fix-audio-engine.js
 
       - name: Build Web Assets
         run: npm run build
@@ -70,7 +118,7 @@ jobs:
           npx cap add android
           npx cap copy
 
-      - name: Inject Android Permissions & Foreground Service
+      - name: Inject Android Permissions & Background Playback
         run: |
           sed -i '/<\/manifest>/i \    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />' android/app/src/main/AndroidManifest.xml
 
