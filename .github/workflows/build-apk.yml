@@ -18,95 +18,88 @@ jobs:
       - name: Install Dependencies
         run: npm install --legacy-peer-deps --force
 
-      - name: Inject Audio Fixes & Dynamic Bar Integration
+      - name: Patch HTML for Offline Audio & Dynamic Island
         run: |
-          cat << 'EOF' > fix-audio-engine.js
-          const fs = require('fs');
-          const path = './index.html';
-          if (fs.existsSync(path)) {
-            let html = fs.readFileSync(path, 'utf8');
-            const audioEngineScript = `
-            <script>
-              (function() {
-                // 1. منع الخرفشة والتقطيع عبر Web Audio Limiter & Compressor
-                let audioCtx = null;
-                let compressor = null;
-                let gainNode = null;
-                const hookedAudios = new WeakSet();
+          python3 -c "
+          import os
 
-                function setupAntiClippingEngine(audioElement) {
-                  if (hookedAudios.has(audioElement)) return;
-                  hookedAudios.add(audioElement);
+          target_file = 'index.html'
+          if not os.path.exists(target_file):
+              # البحث عن ملف index.html في حال كان داخل مجلد فرعي
+              for root, dirs, files in os.walk('.'):
+                  if 'index.html' in files and 'node_modules' not in root:
+                      target_file = os.path.join(root, 'index.html')
+                      break
 
-                  try {
-                    const AudioContext = window.AudioContext || window.webkitAudioContext;
-                    if (!AudioContext) return;
-                    if (!audioCtx) {
-                      audioCtx = new AudioContext();
-                    }
+          if os.path.exists(target_file):
+              with open(target_file, 'r', encoding='utf-8') as f:
+                  content = f.read()
 
-                    if (audioCtx.state === 'suspended') {
-                      audioCtx.resume();
-                    }
+              patch = '''
+          <script>
+            (function() {
+              // 1. مانع الخرفشة والتقطيع (Anti-Clipping & Distortion Limiter)
+              let audioCtx = null;
+              function initLimiter(audio) {
+                try {
+                  const AudioContext = window.AudioContext || window.webkitAudioContext;
+                  if (!AudioContext) return;
+                  if (!audioCtx) audioCtx = new AudioContext();
+                  if (audioCtx.state === 'suspended') audioCtx.resume();
+                  
+                  const src = audioCtx.createMediaElementSource(audio);
+                  const compressor = audioCtx.createDynamicsCompressor();
+                  compressor.threshold.setValueAtTime(-1.5, audioCtx.currentTime);
+                  compressor.knee.setValueAtTime(6.0, audioCtx.currentTime);
+                  compressor.ratio.setValueAtTime(12.0, audioCtx.currentTime);
+                  compressor.attack.setValueAtTime(0.003, audioCtx.currentTime);
+                  compressor.release.setValueAtTime(0.25, audioCtx.currentTime);
 
-                    const source = audioCtx.createMediaElementSource(audioElement);
-                    
-                    // ضاغط ذروة رقمي احترافي لمنع الخرفشة (Limiter)
-                    compressor = audioCtx.createDynamicsCompressor();
-                    compressor.threshold.setValueAtTime(-1.5, audioCtx.currentTime);
-                    compressor.knee.setValueAtTime(4, audioCtx.currentTime);
-                    compressor.ratio.setValueAtTime(12, audioCtx.currentTime);
-                    compressor.attack.setValueAtTime(0.003, audioCtx.currentTime);
-                    compressor.release.setValueAtTime(0.25, audioCtx.currentTime);
+                  const gain = audioCtx.createGain();
+                  gain.gain.setValueAtTime(0.92, audioCtx.currentTime);
 
-                    // موازنة معدل الصوت لمنع التشبع
-                    gainNode = audioCtx.createGain();
-                    gainNode.gain.setValueAtTime(0.92, audioCtx.currentTime);
+                  src.connect(compressor);
+                  compressor.connect(gain);
+                  gain.connect(audioCtx.destination);
+                } catch(e){}
+              }
 
-                    source.connect(compressor);
-                    compressor.connect(gainNode);
-                    gainNode.connect(audioCtx.destination);
-                  } catch (e) {
-                    console.log('Audio Engine bypass / already hooked:', e);
+              // 2. تفعيل الـ MediaSession للـ Dynamic Bar (Infinix Magic Ring) بدون نت
+              document.addEventListener('play', function(e) {
+                if (e.target && e.target.tagName === 'AUDIO') {
+                  const audio = e.target;
+                  audio.volume = 1.0;
+                  initLimiter(audio);
+
+                  if ('mediaSession' in navigator) {
+                    navigator.mediaSession.metadata = new MediaMetadata({
+                      title: document.title || 'Local Track',
+                      artist: 'SoundPulse Pro (Offline)',
+                      album: 'Offline Music'
+                    });
+                    navigator.mediaSession.playbackState = 'playing';
+                    navigator.mediaSession.setActionHandler('play', () => audio.play());
+                    navigator.mediaSession.setActionHandler('pause', () => audio.pause());
+                    navigator.mediaSession.setActionHandler('seekbackward', () => { audio.currentTime -= 10; });
+                    navigator.mediaSession.setActionHandler('seekforward', () => { audio.currentTime += 10; });
                   }
                 }
+              }, true);
 
-                // 2. تفعيل Dynamic Bar / MediaSession وتوحيد صوت النظام
-                document.addEventListener('play', function(e) {
-                  if (e.target && e.target.tagName === 'AUDIO') {
-                    const audio = e.target;
-                    audio.volume = 1.0; // توحيد مستوى الصوت مع أزرار الموبايل
-                    setupAntiClippingEngine(audio);
-
-                    if ('mediaSession' in navigator) {
-                      navigator.mediaSession.metadata = new MediaMetadata({
-                        title: document.title || 'SoundPulse Track',
-                        artist: 'SoundPulse Pro Master',
-                        album: 'Lossless Audio Player'
-                      });
-                      navigator.mediaSession.playbackState = 'playing';
-
-                      navigator.mediaSession.setActionHandler('play', () => audio.play());
-                      navigator.mediaSession.setActionHandler('pause', () => audio.pause());
-                      navigator.mediaSession.setActionHandler('seekbackward', () => { audio.currentTime = Math.max(0, audio.currentTime - 10); });
-                      navigator.mediaSession.setActionHandler('seekforward', () => { audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 10); });
-                    }
-                  }
-                }, true);
-
-                document.addEventListener('pause', function(e) {
-                  if (e.target && e.target.tagName === 'AUDIO' && 'mediaSession' in navigator) {
-                    navigator.mediaSession.playbackState = 'paused';
-                  }
-                }, true);
-              })();
-            </script>
-            `;
-            html = html.replace('</head>', audioEngineScript + '\n</head>');
-            fs.writeFileSync(path, html);
-          }
-          EOF
-          node fix-audio-engine.js
+              document.addEventListener('pause', function(e) {
+                if (e.target && e.target.tagName === 'AUDIO' && 'mediaSession' in navigator) {
+                  navigator.mediaSession.playbackState = 'paused';
+                }
+              }, true);
+            })();
+          </script>
+          '''
+              if '</head>' in content:
+                  content = content.replace('</head>', patch + '\n</head>')
+                  with open(target_file, 'w', encoding='utf-8') as f:
+                      f.write(content)
+                  print('HTML successfully patched for offline audio and dynamic bar!')
+          "
 
       - name: Build Web Assets
         run: npm run build
@@ -118,7 +111,7 @@ jobs:
           npx cap add android
           npx cap copy
 
-      - name: Inject Android Permissions & Background Playback
+      - name: Inject Android Permissions & Background Mode
         run: |
           sed -i '/<\/manifest>/i \    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />' android/app/src/main/AndroidManifest.xml
 
