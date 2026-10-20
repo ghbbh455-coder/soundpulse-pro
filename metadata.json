@@ -1,0 +1,8 @@
+{
+  "name": "SoundPulse Pro - Studio Music & Video Player",
+  "description": "Professional offline music & video player with 300% volume boost, video-to-audio converter, 10-band equalizer, spectrum visualizer, customizable neon themes, and smart playlists. By Abdallah Mahmoud.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
