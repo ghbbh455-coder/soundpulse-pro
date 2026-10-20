@@ -18,6 +18,48 @@ jobs:
       - name: Install Dependencies
         run: npm install --legacy-peer-deps --force
 
+      - name: Inject MediaSession & System Volume Integration
+        run: |
+          cat << 'EOF' > inject-media.js
+          const fs = require('fs');
+          const path = './index.html';
+          if (fs.existsSync(path)) {
+            let html = fs.readFileSync(path, 'utf8');
+            const mediaScript = `
+            <script>
+              // تزامن الـ MediaSession مع الـ Dynamic Island / Magic Ring
+              document.addEventListener('play', function(e) {
+                if (e.target.tagName === 'AUDIO') {
+                  const audio = e.target;
+                  audio.volume = 1.0; // توحيد الصوت مع صوت النظام
+                  if ('mediaSession' in navigator) {
+                    navigator.mediaSession.metadata = new MediaMetadata({
+                      title: document.title || 'SoundPulse Track',
+                      artist: 'SoundPulse Pro',
+                      album: 'SoundPulse Player'
+                    });
+                    navigator.mediaSession.playbackState = 'playing';
+                    navigator.mediaSession.setActionHandler('play', () => audio.play());
+                    navigator.mediaSession.setActionHandler('pause', () => audio.pause());
+                    navigator.mediaSession.setActionHandler('seekbackward', () => { audio.currentTime -= 10; });
+                    navigator.mediaSession.setActionHandler('seekforward', () => { audio.currentTime += 10; });
+                  }
+                }
+              }, true);
+
+              document.addEventListener('pause', function(e) {
+                if (e.target.tagName === 'AUDIO' && 'mediaSession' in navigator) {
+                  navigator.mediaSession.playbackState = 'paused';
+                }
+              }, true);
+            </script>
+            `;
+            html = html.replace('</head>', mediaScript + '</head>');
+            fs.writeFileSync(path, html);
+          }
+          EOF
+          node inject-media.js
+
       - name: Build Web Assets
         run: npm run build
 
@@ -28,9 +70,9 @@ jobs:
           npx cap add android
           npx cap copy
 
-      - name: Inject Android Audio Permissions
+      - name: Inject Android Permissions & Foreground Service
         run: |
-          sed -i '/<\/manifest>/i \    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />' android/app/src/main/AndroidManifest.xml
+          sed -i '/<\/manifest>/i \    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />' android/app/src/main/AndroidManifest.xml
 
       - name: Setup Java JDK
         uses: actions/setup-java@v4
