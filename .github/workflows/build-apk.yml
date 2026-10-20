@@ -23,10 +23,14 @@ jobs:
 
       - name: Install & Configure Capacitor
         run: |
-          npm install @capacitor/core @capacitor/cli @capacitor/android --legacy-peer-deps
+          npm install @capacitor/core @capacitor/cli @capacitor/android @capacitor/filesystem --legacy-peer-deps
           npx cap init "SoundPulse Pro" "com.soundpulse.app" --web-dir dist
           npx cap add android
           npx cap copy
+
+      - name: Inject Android Audio Permissions
+        run: |
+          sed -i '/<\/manifest>/i \    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />' android/app/src/main/AndroidManifest.xml
 
       - name: Setup Java JDK
         uses: actions/setup-java@v4
