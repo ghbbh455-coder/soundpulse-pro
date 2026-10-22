@@ -37,6 +37,8 @@ import {
   getPersistedTracks,
   persistTracksToStorage,
   mergeAndPersistScannedTracks,
+  isJunkOrVoiceNote,
+  toPlayableUrl,
 } from './utils/trackHelper';
 import { getThemeClasses } from './utils/themeHelper';
 import { androidBackButtonManager } from './services/androidBackButtonManager';
@@ -117,11 +119,11 @@ export default function App() {
       document.documentElement.lang = savedTheme.language;
 
       const { tracks: loadedTracks, playlists: loadedPlaylists } = await initializeDefaultLibrary();
-      // Purge any demo tracks to keep only real user music
-      let allTracks = loadedTracks.filter((t) => !t.id.startsWith('demo-'));
+      // Purge any demo tracks and WhatsApp/junk voice notes to keep only real user music
+      let allTracks = loadedTracks.filter((t) => !t.id.startsWith('demo-') && !isJunkOrVoiceNote(t));
 
       // 1. Read persistent tracks from localStorage ('soundpulse_tracks')
-      const persisted = getPersistedTracks().filter((t) => !t.id.startsWith('demo-'));
+      const persisted = getPersistedTracks().filter((t) => !t.id.startsWith('demo-') && !isJunkOrVoiceNote(t));
       if (persisted.length > 0) {
         const { merged } = await mergeAndPersistScannedTracks(allTracks, persisted);
         allTracks = merged;
@@ -129,7 +131,9 @@ export default function App() {
 
       // 2. Read tracks from window.__LOCAL_TRACKS__ if already populated by Android native shell
       if (typeof window !== 'undefined' && Array.isArray((window as any).__LOCAL_TRACKS__)) {
-        const winTracks = (window as any).__LOCAL_TRACKS__.filter((t: any) => !String(t.id).startsWith('demo-'));
+        const winTracks = (window as any).__LOCAL_TRACKS__.filter(
+          (t: any) => !String(t.id).startsWith('demo-') && !isJunkOrVoiceNote(t)
+        );
         if (winTracks.length > 0) {
           const { merged } = await mergeAndPersistScannedTracks(allTracks, winTracks);
           allTracks = merged;
@@ -148,7 +152,7 @@ export default function App() {
       }
 
       // Final clean & persist
-      allTracks = allTracks.filter((t) => !t.id.startsWith('demo-'));
+      allTracks = allTracks.filter((t) => !t.id.startsWith('demo-') && !isJunkOrVoiceNote(t));
       persistTracksToStorage(allTracks);
 
       setTracks(allTracks);
@@ -176,7 +180,7 @@ export default function App() {
       if (!Array.isArray(incoming) || incoming.length === 0) return;
 
       setTracks((prevTracks) => {
-        const cleanPrev = prevTracks.filter((t) => !t.id.startsWith('demo-'));
+        const cleanPrev = prevTracks.filter((t) => !t.id.startsWith('demo-') && !isJunkOrVoiceNote(t));
         const existingIds = new Set(cleanPrev.map((t) => t.id));
         const existingUrls = new Set(
           cleanPrev.map((t) => (t.url || t.blobUrl || '').trim().toLowerCase()).filter(Boolean)
@@ -184,9 +188,9 @@ export default function App() {
 
         const newTracks: Track[] = [];
         incoming.forEach((raw, idx) => {
-          if (!raw) return;
+          if (!raw || isJunkOrVoiceNote(raw)) return;
           const normalized = normalizeScannedTrack(raw, idx);
-          if (normalized.id.startsWith('demo-')) return;
+          if (normalized.id.startsWith('demo-') || isJunkOrVoiceNote(normalized)) return;
           const normalizedUrl = (normalized.url || normalized.blobUrl || '').trim().toLowerCase();
           const isDuplicate =
             existingIds.has(normalized.id) || (normalizedUrl && existingUrls.has(normalizedUrl));
@@ -206,7 +210,10 @@ export default function App() {
         persistTracksToStorage(updated);
         newTracks.forEach((t) => saveTrack(t).catch(console.warn));
 
-        setQueue((prevQueue) => [...newTracks, ...prevQueue.filter((t) => !t.id.startsWith('demo-'))]);
+        setQueue((prevQueue) => [
+          ...newTracks,
+          ...prevQueue.filter((t) => !t.id.startsWith('demo-') && !isJunkOrVoiceNote(t)),
+        ]);
 
         setCurrentTrack((curr) => {
           if (!curr && updated.length > 0) return updated[0];
@@ -364,8 +371,17 @@ export default function App() {
       mediaSessionManager.updatePositionState(audio.currentTime, audio.duration, audio.playbackRate);
     };
     const onLoadedMetadata = () => {
-      setDuration(audio.duration || 0);
-      mediaSessionManager.updatePositionState(audio.currentTime, audio.duration, audio.playbackRate);
+      const realDur = audio.duration || 0;
+      setDuration(realDur);
+      mediaSessionManager.updatePositionState(audio.currentTime, realDur, audio.playbackRate);
+
+      if (realDur > 0 && currentTrack && (!currentTrack.duration || currentTrack.duration === 0)) {
+        const rounded = Math.round(realDur);
+        const updated = { ...currentTrack, duration: rounded };
+        setCurrentTrack(updated);
+        setTracks((prev) => prev.map((t) => (t.id === currentTrack.id ? updated : t)));
+        saveTrack(updated).catch(console.warn);
+      }
     };
     const onEnded = () => handleTrackEnded();
     const onPlay = () => {
@@ -427,7 +443,8 @@ export default function App() {
   // Smart Crossfade & Track Playback Engine (Feature [5])
   const handlePlayTrack = (track: Track, newQueue?: Track[], openLiquidModal: boolean = true) => {
     const audio = audioRef.current;
-    const playableSrc = track.blobUrl || track.url;
+    const rawSrc = track.blobUrl || track.url;
+    const playableSrc = toPlayableUrl(rawSrc);
     if (!audio || !playableSrc) return;
 
     if (newQueue) {

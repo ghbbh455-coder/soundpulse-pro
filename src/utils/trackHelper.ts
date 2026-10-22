@@ -1,7 +1,27 @@
 import { Track } from '../types/player';
 import { createSvgCover, saveTrack } from '../services/storage';
+import { Capacitor } from '@capacitor/core';
 
 export const LOCAL_TRACKS_STORAGE_KEY = 'soundpulse_tracks';
+
+/**
+ * Converts local native file paths (e.g. file:///storage/emulated/0/...)
+ * into a WebView-accessible URL via Capacitor's local bridge (https://localhost/_capacitor_file_/...)
+ */
+export function toPlayableUrl(url: string | undefined): string {
+  if (!url) return '';
+  if (url.startsWith('blob:') || url.startsWith('data:') || url.startsWith('http://') || url.startsWith('https://')) {
+    return url;
+  }
+  try {
+    if (typeof Capacitor !== 'undefined' && typeof Capacitor.convertFileSrc === 'function') {
+      return Capacitor.convertFileSrc(url);
+    }
+  } catch (err) {
+    console.warn('Capacitor.convertFileSrc error:', err);
+  }
+  return url;
+}
 
 const GRADIENTS = [
   ['#00f2fe', '#4facfe'],
@@ -12,6 +32,81 @@ const GRADIENTS = [
   ['#ec4899', '#f43f5e'],
   ['#14b8a6', '#3b82f6'],
 ];
+
+/**
+ * Detects whether a file is a WhatsApp voice note, call recording, short notification tone, or junk audio.
+ */
+export function isJunkOrVoiceNote(raw: any): boolean {
+  if (!raw) return true;
+  const url = String(raw.url || raw.blobUrl || '').toLowerCase();
+  const title = String(raw.title || '').toLowerCase().trim();
+  const artist = String(raw.artist || '').toLowerCase().trim();
+  const album = String(raw.album || '').toLowerCase().trim();
+  const duration = typeof raw.duration === 'number' ? raw.duration : 0;
+
+  // 1. WhatsApp Voice Notes and Audio
+  if (
+    url.includes('whatsapp') ||
+    url.includes('com.whatsapp') ||
+    url.includes('voice notes') ||
+    url.includes('/media/whatsapp') ||
+    title.startsWith('ptt-') ||
+    title.startsWith('aud-') ||
+    title.includes('wa00') ||
+    album.includes('whatsapp')
+  ) {
+    return true;
+  }
+
+  // 2. Telegram, Call Recordings, Dictaphone, Voice Recorder
+  if (
+    url.includes('/telegram/') ||
+    url.includes('org.telegram') ||
+    url.includes('/call_rec') ||
+    url.includes('/callrec') ||
+    url.includes('/voice_record') ||
+    url.includes('/sound_recorder') ||
+    url.includes('/recordings/') ||
+    title.includes('call_') ||
+    title.includes('voice_') ||
+    title.includes('recording_')
+  ) {
+    return true;
+  }
+
+  // 3. Android System ringtones, notifications, alarms, UI sounds, cache
+  if (
+    url.includes('/notifications/') ||
+    url.includes('/ringtones/') ||
+    url.includes('/alarms/') ||
+    url.includes('/ui/') ||
+    url.includes('/cache/') ||
+    url.includes('/.cache/') ||
+    url.includes('/temp/')
+  ) {
+    return true;
+  }
+
+  // 4. Timestamp-style filenames (e.g. 20260108_151158 or 151158_20260108) with unknown artist and short or 0 duration
+  const timestampRegex = /^(\d{8}_\d{6}|\d{6}_\d{8}|rec_\d+|audio_\d+|voice_\d+)/i;
+  const isGenericTimestamp = timestampRegex.test(title.replace(/\s+/g, ''));
+  if (isGenericTimestamp && (!artist || artist === 'unknown artist' || artist === 'ملف محلي') && (duration < 60 || duration === 0)) {
+    return true;
+  }
+
+  // 5. Very short notification clips (< 15 seconds) without valid title or artist
+  if (duration > 0 && duration < 15 && (!artist || artist === 'unknown artist')) {
+    return true;
+  }
+
+  // 6. Opus / AMR audio usually associated with voice notes if duration < 60
+  const ext = url.split('.').pop()?.toLowerCase();
+  if ((ext === 'opus' || ext === 'amr') && duration < 90) {
+    return true;
+  }
+
+  return false;
+}
 
 /**
  * Normalizes any raw scanned audio track object from Android native scanner
@@ -65,7 +160,7 @@ export function normalizeScannedTrack(raw: any, index: number = 0): Track {
     genre: raw.genre || 'SoundPulse Music',
     duration,
     url: directUrl,
-    blobUrl: directUrl, // Enables immediate playback in <audio>
+    blobUrl: toPlayableUrl(directUrl) || directUrl, // Enables immediate playback in <audio> via WebView bridge
     fileType: 'audio',
     fileFormat: cleanExt,
     fileSize: typeof raw.fileSize === 'number' ? raw.fileSize : 0,
@@ -146,7 +241,13 @@ export async function mergeAndPersistScannedTracks(
   const newTracks: Track[] = [];
 
   incomingTracks.forEach((raw, idx) => {
+    if (isJunkOrVoiceNote(raw)) {
+      return;
+    }
     const normalized = normalizeScannedTrack(raw, idx);
+    if (isJunkOrVoiceNote(normalized)) {
+      return;
+    }
     const normalizedUrl = (normalized.url || normalized.blobUrl || '').trim().toLowerCase();
 
     const isDuplicate =

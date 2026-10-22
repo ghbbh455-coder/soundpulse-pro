@@ -676,12 +676,18 @@ export const LiquidNowPlayingModal: React.FC<LiquidNowPlayingModalProps> = ({
 
         {/* Signature Watermark Badge Requested by User */}
         <div className="pt-2 text-center">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/5 border border-white/10 shadow-sm">
-            <Sparkles className="w-3 h-3 text-cyan-400 animate-pulse" />
-            <span className="text-[11px] font-medium tracking-wide text-cyan-300">
+          <a
+            href="https://wa.me/201019524839"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="تواصل مع Abdallah Mahmoud عبر واتساب"
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/5 hover:bg-emerald-500/15 border border-white/10 hover:border-emerald-500/30 transition-all active:scale-95 cursor-pointer shadow-sm group select-none"
+          >
+            <Sparkles className="w-3 h-3 text-cyan-400 group-hover:text-emerald-400 animate-pulse transition-colors" />
+            <span className="text-[11px] font-medium tracking-wide text-cyan-300 group-hover:text-emerald-300 transition-colors">
               by Abdallah Mahmoud
             </span>
-          </div>
+          </a>
         </div>
       </div>
     </div>

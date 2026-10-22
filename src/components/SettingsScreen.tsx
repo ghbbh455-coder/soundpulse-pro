@@ -535,9 +535,15 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             </div>
 
             <h3 className="text-lg font-black text-white">SoundPulse Pro Studio</h3>
-            <p className="text-xs text-cyan-400 font-mono font-bold">
+            <a
+              href="https://wa.me/201019524839"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="تواصل مع Abdallah Mahmoud عبر واتساب"
+              className="inline-block text-xs text-cyan-400 hover:text-emerald-400 font-mono font-bold cursor-pointer transition-colors active:scale-95"
+            >
               تطوير وتصميم: by Abdallah Mahmoud
-            </p>
+            </a>
 
             <div className="p-4 rounded-2xl bg-slate-800/70 border border-slate-700/60 text-xs text-slate-300 text-right space-y-2">
               <p className="text-emerald-400 font-bold">✔ جميع المزايا مجانية 100% وبدون أي اشتراكات أو قيود.</p>
