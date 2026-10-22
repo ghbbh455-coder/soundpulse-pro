@@ -18,117 +18,188 @@ jobs:
       - name: Install Dependencies
         run: npm install --legacy-peer-deps --force
 
-      - name: Patch HTML for Offline Audio & Dynamic Island
-        run: |
-          python3 -c "
-          import os
-
-          target_file = 'index.html'
-          if not os.path.exists(target_file):
-              # البحث عن ملف index.html في حال كان داخل مجلد فرعي
-              for root, dirs, files in os.walk('.'):
-                  if 'index.html' in files and 'node_modules' not in root:
-                      target_file = os.path.join(root, 'index.html')
-                      break
-
-          if os.path.exists(target_file):
-              with open(target_file, 'r', encoding='utf-8') as f:
-                  content = f.read()
-
-              patch = '''
-          <script>
-            (function() {
-              // 1. مانع الخرفشة والتقطيع (Anti-Clipping & Distortion Limiter)
-              let audioCtx = null;
-              function initLimiter(audio) {
-                try {
-                  const AudioContext = window.AudioContext || window.webkitAudioContext;
-                  if (!AudioContext) return;
-                  if (!audioCtx) audioCtx = new AudioContext();
-                  if (audioCtx.state === 'suspended') audioCtx.resume();
-                  
-                  const src = audioCtx.createMediaElementSource(audio);
-                  const compressor = audioCtx.createDynamicsCompressor();
-                  compressor.threshold.setValueAtTime(-1.5, audioCtx.currentTime);
-                  compressor.knee.setValueAtTime(6.0, audioCtx.currentTime);
-                  compressor.ratio.setValueAtTime(12.0, audioCtx.currentTime);
-                  compressor.attack.setValueAtTime(0.003, audioCtx.currentTime);
-                  compressor.release.setValueAtTime(0.25, audioCtx.currentTime);
-
-                  const gain = audioCtx.createGain();
-                  gain.gain.setValueAtTime(0.92, audioCtx.currentTime);
-
-                  src.connect(compressor);
-                  compressor.connect(gain);
-                  gain.connect(audioCtx.destination);
-                } catch(e){}
-              }
-
-              // 2. تفعيل الـ MediaSession للـ Dynamic Bar (Infinix Magic Ring) بدون نت
-              document.addEventListener('play', function(e) {
-                if (e.target && e.target.tagName === 'AUDIO') {
-                  const audio = e.target;
-                  audio.volume = 1.0;
-                  initLimiter(audio);
-
-                  if ('mediaSession' in navigator) {
-                    navigator.mediaSession.metadata = new MediaMetadata({
-                      title: document.title || 'Local Track',
-                      artist: 'SoundPulse Pro (Offline)',
-                      album: 'Offline Music'
-                    });
-                    navigator.mediaSession.playbackState = 'playing';
-                    navigator.mediaSession.setActionHandler('play', () => audio.play());
-                    navigator.mediaSession.setActionHandler('pause', () => audio.pause());
-                    navigator.mediaSession.setActionHandler('seekbackward', () => { audio.currentTime -= 10; });
-                    navigator.mediaSession.setActionHandler('seekforward', () => { audio.currentTime += 10; });
-                  }
-                }
-              }, true);
-
-              document.addEventListener('pause', function(e) {
-                if (e.target && e.target.tagName === 'AUDIO' && 'mediaSession' in navigator) {
-                  navigator.mediaSession.playbackState = 'paused';
-                }
-              }, true);
-            })();
-          </script>
-          '''
-              if '</head>' in content:
-                  content = content.replace('</head>', patch + '\n</head>')
-                  with open(target_file, 'w', encoding='utf-8') as f:
-                      f.write(content)
-                  print('HTML successfully patched for offline audio and dynamic bar!')
-          "
-
       - name: Build Web Assets
         run: npm run build
 
       - name: Install & Configure Capacitor
         run: |
-          npm install @capacitor/core @capacitor/cli @capacitor/android @capacitor/filesystem --legacy-peer-deps
+          npm install @capacitor/core @capacitor/cli @capacitor/android --legacy-peer-deps
           npx cap init "SoundPulse Pro" "com.soundpulse.app" --web-dir dist
           npx cap add android
           npx cap copy
 
-      - name: Inject Android Permissions & Background Mode
+      - name: Inject Android Permissions & Query Providers
         run: |
+          # إضافة الأذونات المطلوبة في الـ Manifest
           sed -i '/<\/manifest>/i \    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />' android/app/src/main/AndroidManifest.xml
 
-      - name: Setup Java JDK
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'zulu'
-          java-version: '21'
-
-      - name: Build APK with Gradle
+      - name: Inject Native Auto-Scanner Plugin (Java)
         run: |
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleDebug
+          cat << 'EOF' > android/app/src/main/java/com/soundpulse/app/MediaScannerPlugin.java
+          package com.soundpulse.app;
 
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: SoundPulse-Pro-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          import android.Manifest;
+          import android.content.ContentUris;
+          import android.database.Cursor;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.provider.MediaStore;
+          import com.getcapacitor.JSArray;
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+          import com.getcapacitor.annotation.Permission;
+          import com.getcapacitor.annotation.PermissionCallback;
+
+          @CapacitorPlugin(
+              name = "MediaScanner",
+              permissions = {
+                  @Permission(
+                      strings = { Manifest.permission.READ_MEDIA_AUDIO },
+                      alias = "audio"
+                  ),
+                  @Permission(
+                      strings = { Manifest.permission.READ_EXTERNAL_STORAGE },
+                      alias = "storage"
+                  )
+              }
+          )
+          public class MediaScannerPlugin extends Plugin {
+
+              @PluginMethod
+              public void scanAudioFiles(PluginCall call) {
+                  String permAlias = (Build.VERSION.SDK_INT >= 33) ? "audio" : "storage";
+                  if (getPermissionState(permAlias) != com.getcapacitor.PermissionState.GRANTED) {
+                      requestPermissionForAlias(permAlias, call, "permissionCallback");
+                  } else {
+                      loadAudio(call);
+                  }
+              }
+
+              @PermissionCallback
+              private void permissionCallback(PluginCall call) {
+                  loadAudio(call);
+              }
+
+              private void loadAudio(PluginCall call) {
+                  JSArray tracks = new JSArray();
+                  Uri uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI;
+                  String selection = MediaStore.Audio.Media.IS_MUSIC + " != 0";
+                  String sortOrder = MediaStore.Audio.Media.TITLE + " ASC";
+
+                  String[] projection = {
+                      MediaStore.Audio.Media._ID,
+                      MediaStore.Audio.Media.TITLE,
+                      MediaStore.Audio.Media.ARTIST,
+                      MediaStore.Audio.Media.DURATION
+                  };
+
+                  try (Cursor cursor = getContext().getContentResolver().query(uri, projection, selection, null, sortOrder)) {
+                      if (cursor != null) {
+                          int idCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID);
+                          int titleCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE);
+                          int artistCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST);
+                          int durCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION);
+
+                          while (cursor.moveToNext()) {
+                              long id = cursor.getLong(idCol);
+                              String title = cursor.getString(titleCol);
+                              String artist = cursor.getString(artistCol);
+                              long duration = cursor.getLong(durCol);
+
+                              Uri contentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id);
+
+                              JSObject track = new JSObject();
+                              track.put("id", String.valueOf(id));
+                              track.put("title", title);
+                              track.put("artist", (artist != null && !artist.equals("<unknown>")) ? artist : "Unknown Artist");
+                              track.put("url", contentUri.toString());
+                              track.put("duration", duration / 1000);
+                              tracks.put(track);
+                          }
+                      }
+                  } catch (Exception e) {
+                      call.reject("Failed to read audio: " + e.getMessage());
+                      return;
+                  }
+
+                  JSObject ret = new JSObject();
+                  ret.put("tracks", tracks);
+                  call.resolve(ret);
+              }
+          }
+          EOF
+
+          # تسجيل البلوجن داخل MainActivity
+          cat << 'EOF' > android/app/src/main/java/com/soundpulse/app/MainActivity.java
+          package com.soundpulse.app;
+
+          import android.os.Bundle;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  registerPlugin(MediaScannerPlugin.class);
+                  super.onCreate(savedInstanceState);
+              }
+          }
+          EOF
+
+      - name: Inject Client-Side Auto-Load & Audio Engine
+        run: |
+          python3 -c "
+          import os
+
+          target = 'index.html'
+          for root, dirs, files in os.walk('.'):
+              if 'index.html' in files and 'node_modules' not in root and 'android' not in root:
+                  target = os.path.join(root, 'index.html')
+                  break
+
+          if os.path.exists(target):
+              with open(target, 'r', encoding='utf-8') as f:
+                  html = f.read()
+
+              auto_script = '''
+          <script>
+            window.addEventListener('DOMContentLoaded', () => {
+              // 1. طلب الإذن وفحص الموسيقى تلقائياً فور فتح التطبيق
+              function triggerAutoScan() {
+                if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.MediaScanner) {
+                  window.Capacitor.Plugins.MediaScanner.scanAudioFiles().then(res => {
+                    if (res && res.tracks && res.tracks.length > 0) {
+                      console.log('Loaded local tracks:', res.tracks.length);
+                      window.dispatchEvent(new CustomEvent('soundpulse:tracks-loaded', { detail: res.tracks }));
+                      
+                      // إذا كانت القائمة فارغة في الواجهة، يتم حقنها مباشرة
+                      const fileInputs = document.querySelectorAll('input[type=\"file\"]');
+                      window.__LOCAL_TRACKS__ = res.tracks;
+                    }
+                  }).catch(err => console.log('Scan error:', err));
+                } else {
+                  setTimeout(triggerAutoScan, 500);
+                }
+              }
+              triggerAutoScan();
+
+              // 2. مانع الخرفشة (Limiter) وتفعيل الـ Dynamic Bar (Infinix Magic Ring)
+              let audioCtx = null;
+              function initLimiter(audio) {
+                try {
+                  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                  if (!AudioCtx) return;
+                  if (!audioCtx) audioCtx = new AudioCtx();
+                  if (audioCtx.state === 'suspended') audioCtx.resume();
+
+                  const src = audioCtx.createMediaElementSource(audio);
+                  const hp = audioCtx.createBiquadFilter();
+                  hp.type = 'highpass';
+                  hp.frequency.setValueAtTime(25, audioCtx.currentTime);
+
+                  const comp = audioCtx.createDynamicsCompressor();
+                  comp.threshold.setValueAtTime(-1.0, audioCtx.currentTime);
+                  comp.knee.setValueAtTime(0.0, audioCtx.currentTime);
+                  comp.ratio.setValueAtTime(2
