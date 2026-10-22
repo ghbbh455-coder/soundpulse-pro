@@ -13,9 +13,6 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Scaffold Native Kotlin Android Project
         run: |
           rm -rf * .github/workflows/build-apk.yml.bak || true
@@ -95,7 +92,6 @@ jobs:
               implementation 'androidx.compose.material3:material3'
               implementation 'androidx.compose.material:material-icons-extended'
               
-              // مكتبة Media3 الرسمية من جوجل لدعم الـ MediaSession و Dynamic Bar
               implementation 'androidx.media3:media3-exoplayer:1.2.1'
               implementation 'androidx.media3:media3-session:1.2.1'
               implementation 'androidx.media3:media3-ui:1.2.1'
@@ -139,7 +135,7 @@ jobs:
           </manifest>
           EOF
 
-          # 5. خدمة التشغيل الأصلية في الخلفية (PlaybackService.kt) لدعم الـ Magic Ring
+          # 5. خدمة التشغيل الأصلية في الخلفية (PlaybackService.kt)
           cat << 'EOF' > app/src/main/java/com/soundpulse/nativeplayer/PlaybackService.kt
           package com.soundpulse.nativeplayer
 
@@ -181,7 +177,7 @@ jobs:
           }
           EOF
 
-          # 6. واجهة التطبيق وكود فحص الذاكرة بالنسب المئوية (MainActivity.kt)
+          # 6. واجهة التطبيق وكود فحص الذاكرة (MainActivity.kt)
           cat << 'EOF' > app/src/main/java/com/soundpulse/nativeplayer/MainActivity.kt
           package com.soundpulse.nativeplayer
 
