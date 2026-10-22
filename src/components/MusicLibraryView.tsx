@@ -16,6 +16,7 @@ import {
   X,
   FolderSearch,
   FolderSync,
+  FolderOpen,
 } from 'lucide-react';
 
 interface MusicLibraryViewProps {
@@ -322,15 +323,33 @@ export const MusicLibraryView: React.FC<MusicLibraryViewProps> = ({
                 </>
               ) : (
                 <>
-                  <Music className="w-10 h-10 text-slate-600 mx-auto" />
-                  <h3 className="text-sm font-bold text-slate-300">لا توجد مقاطع صوتية</h3>
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="px-4 py-2 rounded-xl text-xs font-bold text-black cursor-pointer shadow-md"
-                    style={{ backgroundColor: accentHex }}
-                  >
-                    استيراد ملفات
-                  </button>
+                  <div className="w-14 h-14 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center mx-auto text-cyan-400">
+                    <Music className="w-7 h-7 animate-pulse" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-sm font-bold text-slate-200">المكتبة الموسيقية فارغة</h3>
+                    <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                      سيتم إدراج أغاني الهاتف تلقائياً فور فحص الذاكرة، أو يمكنك اختيار مجلد الموسيقى للبدء فوراً.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                    {onPickAndScanFolder && (
+                      <button
+                        onClick={onPickAndScanFolder}
+                        className="px-4 py-2 rounded-xl text-xs font-bold text-black cursor-pointer shadow-md flex items-center gap-1.5 transition-transform active:scale-95"
+                        style={{ backgroundColor: accentHex }}
+                      >
+                        <FolderOpen className="w-4 h-4" />
+                        <span>فحص مجلد الأغاني (Android)</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-300 bg-white/10 hover:bg-white/15 border border-white/10 cursor-pointer transition"
+                    >
+                      اختيار ملفات يدوياً
+                    </button>
+                  </div>
                 </>
               )}
             </motion.div>

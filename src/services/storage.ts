@@ -90,6 +90,8 @@ export async function getAllTracks(): Promise<Track[]> {
       tracks.forEach(track => {
         if (track.fileBlob && !track.blobUrl) {
           track.blobUrl = URL.createObjectURL(track.fileBlob);
+        } else if (track.url && !track.blobUrl) {
+          track.blobUrl = track.url;
         }
       });
       resolve(tracks);
@@ -229,97 +231,22 @@ export async function initializeDefaultLibrary(): Promise<{ tracks: Track[]; pla
   let tracks = await getAllTracks();
   let playlists = await getAllPlaylists();
 
-  if (tracks.length === 0) {
-    // Generate built-in offline test tracks
-    const t1 = generateDemoTrack1();
-    const track1: Track = {
-      id: 'demo-1',
-      title: 'Cyber Pulse (Synthwave Odyssey)',
-      artist: 'SoundPulse Studio',
-      album: 'Neon Horizon',
-      genre: 'Synthwave',
-      duration: t1.duration,
-      fileBlob: t1.blob,
-      blobUrl: URL.createObjectURL(t1.blob),
-      fileType: 'audio',
-      fileFormat: 'wav',
-      fileSize: t1.blob.size,
-      dateAdded: Date.now() - 3600000,
-      playCount: 12,
-      isFavorite: true,
-      coverArt: createSvgCover('Cyber Pulse', '#00f2fe', '#4facfe'),
-      lyrics: `[00:00.00]SoundPulse Pro - Cyber Pulse
-[00:03.50]نغمات النيون في ليل المدينة الهادئ
-[00:07.00]أصوات المستقبل تنبض بالحياة والإيقاع
-[00:11.00]سافر في عالم الصوت الفائق 300%
-[00:14.50]Cybernetic dreams in a neon haze
-[00:18.00]SoundPulse Studio - Music unleashed!
-[00:22.00]by Abdallah Mahmoud`,
-    };
-
-    const t2 = generateDemoTrack2();
-    const track2: Track = {
-      id: 'demo-2',
-      title: 'Midnight Reverie (Chill Lo-Fi)',
-      artist: 'Abdallah Mahmoud',
-      album: 'Quiet Hours',
-      genre: 'Lo-Fi Chill',
-      duration: t2.duration,
-      fileBlob: t2.blob,
-      blobUrl: URL.createObjectURL(t2.blob),
-      fileType: 'audio',
-      fileFormat: 'wav',
-      fileSize: t2.blob.size,
-      dateAdded: Date.now() - 1800000,
-      playCount: 8,
-      isFavorite: true,
-      coverArt: createSvgCover('Midnight Reverie', '#a855f7', '#ec4899'),
-      lyrics: `[00:00.00]Midnight Reverie - Lo-Fi Chill
-[00:04.00]هدوء الليل يملأ الأرجاء والسكينة
-[00:08.50]أنغام هادئة تريح البال وتصفي الذهن
-[00:13.00]Quiet hours, endless peace and dreams
-[00:17.50]by Abdallah Mahmoud
-[00:22.00]استمتع بالنقاء والصفاء الصوتي مع SoundPulse`,
-    };
-
-    // Generate demo video with audio
-    try {
-      const v = await generateDemoVideoBlob();
-      if (v.duration > 0 && v.blob.size > 0) {
-        const videoTrack: Track = {
-          id: 'demo-video-1',
-          title: 'Neon Waves Visual Showcase',
-          artist: 'Studio Visuals',
-          album: 'Motion Clips',
-          genre: 'Visual Showcase',
-          duration: v.duration,
-          fileBlob: v.blob,
-          blobUrl: URL.createObjectURL(v.blob),
-          fileType: 'video',
-          fileFormat: 'webm',
-          fileSize: v.blob.size,
-          dateAdded: Date.now() - 900000,
-          playCount: 4,
-          isFavorite: false,
-          coverArt: createSvgCover('Video Showcase', '#10b981', '#06b6d4'),
-        };
-        await saveTrack(videoTrack);
-        tracks.push(videoTrack);
-      }
-    } catch {
-      // Continue if video creation is unsupported in certain environments
+  // Clean up any previously stored demo tracks
+  const demoIds = ['demo-1', 'demo-2', 'demo-video-1'];
+  for (const dId of demoIds) {
+    if (tracks.some(t => t.id === dId)) {
+      await deleteTrack(dId).catch(() => {});
     }
+  }
+  tracks = tracks.filter(t => !t.id.startsWith('demo-'));
 
-    await saveTrack(track1);
-    await saveTrack(track2);
-    tracks.unshift(track1, track2);
-
-    // Create default starter playlists
+  if (playlists.length === 0) {
+    // Create clean default starter playlists with empty tracks
     const favPlaylist: Playlist = {
       id: 'pl-favorites',
       name: 'المفضلة (Favorites)',
       description: 'أغانيك ومقاطعك المفضلة',
-      trackIds: ['demo-1', 'demo-2'],
+      trackIds: [],
       createdAt: Date.now(),
       coverColor: '#ec4899',
       autoSort: 'plays-desc',
@@ -329,7 +256,7 @@ export async function initializeDefaultLibrary(): Promise<{ tracks: Track[]; pla
       id: 'pl-chill',
       name: 'أجواء الاسترخاء والتركيز',
       description: 'موسيقى هادئة للدراسة والاسترخاء',
-      trackIds: ['demo-2'],
+      trackIds: [],
       createdAt: Date.now(),
       coverColor: '#8b5cf6',
       autoSort: 'title-asc',
@@ -338,12 +265,20 @@ export async function initializeDefaultLibrary(): Promise<{ tracks: Track[]; pla
     await savePlaylist(favPlaylist);
     await savePlaylist(chillPlaylist);
     playlists = [favPlaylist, chillPlaylist];
+  } else {
+    // Purge demo track IDs from existing playlists
+    for (const pl of playlists) {
+      if (pl.trackIds.some(id => id.startsWith('demo-'))) {
+        pl.trackIds = pl.trackIds.filter(id => !id.startsWith('demo-'));
+        await savePlaylist(pl).catch(() => {});
+      }
+    }
   }
 
   return { tracks, playlists };
 }
 
-function createSvgCover(title: string, color1: string, color2: string): string {
+export function createSvgCover(title: string, color1: string = '#00f2fe', color2: string = '#4facfe'): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">
     <defs>
       <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">

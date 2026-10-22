@@ -26,6 +26,7 @@ export interface Track {
   duration: number; // in seconds
   fileBlob?: Blob;
   blobUrl?: string;
+  url?: string; // Direct file URL (file:///..., capacitor://..., etc.)
   fileType: 'audio' | 'video';
   fileFormat: string;
   fileSize: number;

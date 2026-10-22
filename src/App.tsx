@@ -32,6 +32,12 @@ import {
   autoSyncSavedMusicFolder,
   scanFromFileInput,
 } from './services/folderScanner';
+import {
+  normalizeScannedTrack,
+  getPersistedTracks,
+  persistTracksToStorage,
+  mergeAndPersistScannedTracks,
+} from './utils/trackHelper';
 import { getThemeClasses } from './utils/themeHelper';
 import { androidBackButtonManager } from './services/androidBackButtonManager';
 import { motion, AnimatePresence } from 'motion/react';
@@ -91,7 +97,7 @@ export default function App() {
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Initialize Library & Settings
+  // Initialize Library & Settings (100% Offline Android Support)
   useEffect(() => {
     async function loadInitialData() {
       const savedTheme = await getSetting<ThemeConfig>('theme_config', defaultThemeConfig);
@@ -111,17 +117,39 @@ export default function App() {
       document.documentElement.lang = savedTheme.language;
 
       const { tracks: loadedTracks, playlists: loadedPlaylists } = await initializeDefaultLibrary();
-      let allTracks = loadedTracks;
+      // Purge any demo tracks to keep only real user music
+      let allTracks = loadedTracks.filter((t) => !t.id.startsWith('demo-'));
 
-      // Auto-scan saved music folder on Android if previously granted
+      // 1. Read persistent tracks from localStorage ('soundpulse_tracks')
+      const persisted = getPersistedTracks().filter((t) => !t.id.startsWith('demo-'));
+      if (persisted.length > 0) {
+        const { merged } = await mergeAndPersistScannedTracks(allTracks, persisted);
+        allTracks = merged;
+      }
+
+      // 2. Read tracks from window.__LOCAL_TRACKS__ if already populated by Android native shell
+      if (typeof window !== 'undefined' && Array.isArray((window as any).__LOCAL_TRACKS__)) {
+        const winTracks = (window as any).__LOCAL_TRACKS__.filter((t: any) => !String(t.id).startsWith('demo-'));
+        if (winTracks.length > 0) {
+          const { merged } = await mergeAndPersistScannedTracks(allTracks, winTracks);
+          allTracks = merged;
+        }
+      }
+
+      // 3. Auto-sync previously authorized music folder if available
       try {
-        const syncRes = await autoSyncSavedMusicFolder(loadedTracks);
+        const syncRes = await autoSyncSavedMusicFolder(allTracks);
         if (syncRes && syncRes.newTracks.length > 0) {
-          allTracks = [...loadedTracks, ...syncRes.newTracks];
+          const { merged } = await mergeAndPersistScannedTracks(allTracks, syncRes.newTracks);
+          allTracks = merged;
         }
       } catch (err) {
         console.warn('Auto folder sync on startup notice:', err);
       }
+
+      // Final clean & persist
+      allTracks = allTracks.filter((t) => !t.id.startsWith('demo-'));
+      persistTracksToStorage(allTracks);
 
       setTracks(allTracks);
       setPlaylists(loadedPlaylists);
@@ -132,6 +160,73 @@ export default function App() {
       }
     }
     loadInitialData();
+  }, []);
+
+  // Listen for native Android scanner event: 'soundpulse:tracks-loaded'
+  useEffect(() => {
+    const handleAndroidTracksLoaded = (e: Event) => {
+      const customEvt = e as CustomEvent<any>;
+      const incoming =
+        (Array.isArray(customEvt.detail) ? customEvt.detail : null) ||
+        (customEvt.detail && Array.isArray(customEvt.detail.tracks) ? customEvt.detail.tracks : null) ||
+        (typeof window !== 'undefined' && Array.isArray((window as any).__LOCAL_TRACKS__)
+          ? (window as any).__LOCAL_TRACKS__
+          : []);
+
+      if (!Array.isArray(incoming) || incoming.length === 0) return;
+
+      setTracks((prevTracks) => {
+        const cleanPrev = prevTracks.filter((t) => !t.id.startsWith('demo-'));
+        const existingIds = new Set(cleanPrev.map((t) => t.id));
+        const existingUrls = new Set(
+          cleanPrev.map((t) => (t.url || t.blobUrl || '').trim().toLowerCase()).filter(Boolean)
+        );
+
+        const newTracks: Track[] = [];
+        incoming.forEach((raw, idx) => {
+          if (!raw) return;
+          const normalized = normalizeScannedTrack(raw, idx);
+          if (normalized.id.startsWith('demo-')) return;
+          const normalizedUrl = (normalized.url || normalized.blobUrl || '').trim().toLowerCase();
+          const isDuplicate =
+            existingIds.has(normalized.id) || (normalizedUrl && existingUrls.has(normalizedUrl));
+
+          if (!isDuplicate) {
+            existingIds.add(normalized.id);
+            if (normalizedUrl) existingUrls.add(normalizedUrl);
+            newTracks.push(normalized);
+          }
+        });
+
+        if (newTracks.length === 0) return cleanPrev;
+
+        const updated = [...newTracks, ...cleanPrev];
+
+        // Persist immediately to localStorage and IndexedDB
+        persistTracksToStorage(updated);
+        newTracks.forEach((t) => saveTrack(t).catch(console.warn));
+
+        setQueue((prevQueue) => [...newTracks, ...prevQueue.filter((t) => !t.id.startsWith('demo-'))]);
+
+        setCurrentTrack((curr) => {
+          if (!curr && updated.length > 0) return updated[0];
+          return curr;
+        });
+
+        setFolderScanToast({
+          message: `تم التعرف على ${newTracks.length} أغنية من الهاتف وإضافتها للمكتبة فوراً!`,
+          type: 'success',
+        });
+        setTimeout(() => setFolderScanToast(null), 4000);
+
+        return updated;
+      });
+    };
+
+    window.addEventListener('soundpulse:tracks-loaded', handleAndroidTracksLoaded);
+    return () => {
+      window.removeEventListener('soundpulse:tracks-loaded', handleAndroidTracksLoaded);
+    };
   }, []);
 
   // Hardware Back Button Handling (@capacitor/app & window.history popstate)
@@ -332,7 +427,8 @@ export default function App() {
   // Smart Crossfade & Track Playback Engine (Feature [5])
   const handlePlayTrack = (track: Track, newQueue?: Track[], openLiquidModal: boolean = true) => {
     const audio = audioRef.current;
-    if (!audio || !track.blobUrl) return;
+    const playableSrc = track.blobUrl || track.url;
+    if (!audio || !playableSrc) return;
 
     if (newQueue) {
       setQueue(newQueue);
@@ -346,7 +442,7 @@ export default function App() {
 
     const startTrack = () => {
       setCurrentTrack(track);
-      audio.src = track.blobUrl!;
+      audio.src = playableSrc;
       audioEngine.init(audio);
       audioEngine.resume();
 

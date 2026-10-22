@@ -120,7 +120,7 @@ export const AudioTrimmerModal: React.FC<AudioTrimmerModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-6 space-y-5 shadow-2xl text-slate-100">
-        <audio ref={audioRef} src={track.blobUrl} />
+        <audio ref={audioRef} src={track.blobUrl || track.url} />
 
         <div className="flex items-center justify-between pb-3 border-b border-slate-800">
           <div className="flex items-center gap-2.5">
