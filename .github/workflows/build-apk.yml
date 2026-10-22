@@ -21,10 +21,9 @@ jobs:
       - name: Build Web Assets
         run: npm run build
 
-      - name: Setup Capacitor with JSON Config (Bypass TS Error)
+      - name: Setup Capacitor with JSON Config
         run: |
           npm install @capacitor/core @capacitor/cli @capacitor/android --legacy-peer-deps
-          # كتابة ملف الإعدادات بصيغة JSON لمنع خطأ CommonJS و TypeScript نهائياً
           cat << 'EOF' > capacitor.config.json
           {
             "appId": "com.soundpulse.app",
@@ -36,6 +35,23 @@ jobs:
           rm -f capacitor.config.ts capacitor.config.js || true
           npx cap add android
           npx cap sync android
+
+      - name: Fix Kotlin Duplicate Class Conflict
+        run: |
+          # إجبار Gradle على استبعاد kotlin-stdlib-jdk7 و kotlin-stdlib-jdk8 المكررة
+          cat << 'EOF' >> android/app/build.gradle
+
+          configurations.all {
+              resolutionStrategy {
+                  eachDependency { DependencyResolveDetails details ->
+                      if (details.requested.group == 'org.jetbrains.kotlin' && 
+                         (details.requested.name == 'kotlin-stdlib-jdk7' || details.requested.name == 'kotlin-stdlib-jdk8')) {
+                          details.useTarget("org.jetbrains.kotlin:kotlin-stdlib:1.8.22")
+                      }
+                  }
+              }
+          }
+          EOF
 
       - name: Add Storage Permissions to AndroidManifest
         run: |
@@ -235,21 +251,21 @@ jobs:
               function hideLoader() {
                 if (loader) {
                   loader.style.opacity = '0';
-                  setTimeout(() => { loader.style.display = 'none'; }, 400);
+                  setTimeout(function() { loader.style.display = 'none'; }, 400);
                 }
               }
 
               function startScan() {
                 if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.MediaScanner) {
                   const scanner = window.Capacitor.Plugins.MediaScanner;
-                  scanner.addListener('scanProgress', (data) => {
+                  scanner.addListener('scanProgress', function(data) {
                     if (data && data.progress !== undefined) {
                       fill.style.width = data.progress + '%';
                       txt.innerText = data.progress + '% (' + data.current + ' / ' + data.total + ')';
                     }
                   });
 
-                  scanner.scanAudioFiles().then((res) => {
+                  scanner.scanAudioFiles().then(function(res) {
                     fill.style.width = '100%';
                     txt.innerText = '100%';
                     if (res && res.tracks && res.tracks.length > 0) {
@@ -257,14 +273,13 @@ jobs:
                       window.dispatchEvent(new CustomEvent('soundpulse:tracks-loaded', { detail: res.tracks }));
                     }
                     setTimeout(hideLoader, 500);
-                  }).catch(() => hideLoader());
+                  }).catch(function() { hideLoader(); });
                 } else {
                   setTimeout(startScan, 400);
                 }
               }
               startScan();
 
-              // محدد الذروة ومنع الخرفشة (Anti-Clipping Limiter)
               let ctx = null;
               function applyLimiter(audio) {
                 try {
@@ -291,7 +306,6 @@ jobs:
                 } catch(e) {}
               }
 
-              // تفعيل الـ MediaSession للـ Dynamic Bar في إنفينيكس
               document.addEventListener('play', function(e) {
                 if (e.target && e.target.tagName === 'AUDIO') {
                   const audio = e.target;
@@ -305,10 +319,10 @@ jobs:
                       album: 'Offline Local Library'
                     });
                     navigator.mediaSession.playbackState = 'playing';
-                    navigator.mediaSession.setActionHandler('play', () => audio.play());
-                    navigator.mediaSession.setActionHandler('pause', () => audio.pause());
-                    navigator.mediaSession.setActionHandler('seekbackward', () => { audio.currentTime -= 10; });
-                    navigator.mediaSession.setActionHandler('seekforward', () => { audio.currentTime += 10; });
+                    navigator.mediaSession.setActionHandler('play', function() { audio.play(); });
+                    navigator.mediaSession.setActionHandler('pause', function() { audio.pause(); });
+                    navigator.mediaSession.setActionHandler('seekbackward', function() { audio.currentTime -= 10; });
+                    navigator.mediaSession.setActionHandler('seekforward', function() { audio.currentTime += 10; });
                   }
                 }
               }, true);
