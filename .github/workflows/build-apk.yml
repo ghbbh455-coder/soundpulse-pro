@@ -30,7 +30,6 @@ jobs:
 
       - name: Inject Android Permissions & Query Providers
         run: |
-          # إضافة الأذونات المطلوبة في الـ Manifest
           sed -i '/<\/manifest>/i \    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />' android/app/src/main/AndroidManifest.xml
 
       - name: Inject Native Auto-Scanner Plugin (Java)
@@ -132,7 +131,6 @@ jobs:
           }
           EOF
 
-          # تسجيل البلوجن داخل MainActivity
           cat << 'EOF' > android/app/src/main/java/com/soundpulse/app/MainActivity.java
           package com.soundpulse.app;
 
@@ -150,42 +148,39 @@ jobs:
 
       - name: Inject Client-Side Auto-Load & Audio Engine
         run: |
-          python3 -c "
+          cat << 'EOF' > patch_script.py
           import os
 
-          target = 'index.html'
-          for root, dirs, files in os.walk('.'):
-              if 'index.html' in files and 'node_modules' not in root and 'android' not in root:
-                  target = os.path.join(root, 'index.html')
-                  break
+          target = 'android/app/src/main/assets/public/index.html'
+          if not os.path.exists(target):
+              for root, dirs, files in os.walk('.'):
+                  if 'index.html' in files and 'node_modules' not in root:
+                      target = os.path.join(root, 'index.html')
+                      break
 
           if os.path.exists(target):
               with open(target, 'r', encoding='utf-8') as f:
                   html = f.read()
 
-              auto_script = '''
+              auto_script = """
           <script>
-            window.addEventListener('DOMContentLoaded', () => {
-              // 1. طلب الإذن وفحص الموسيقى تلقائياً فور فتح التطبيق
+            window.addEventListener('DOMContentLoaded', function() {
               function triggerAutoScan() {
                 if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.MediaScanner) {
-                  window.Capacitor.Plugins.MediaScanner.scanAudioFiles().then(res => {
+                  window.Capacitor.Plugins.MediaScanner.scanAudioFiles().then(function(res) {
                     if (res && res.tracks && res.tracks.length > 0) {
-                      console.log('Loaded local tracks:', res.tracks.length);
                       window.dispatchEvent(new CustomEvent('soundpulse:tracks-loaded', { detail: res.tracks }));
-                      
-                      // إذا كانت القائمة فارغة في الواجهة، يتم حقنها مباشرة
-                      const fileInputs = document.querySelectorAll('input[type=\"file\"]');
                       window.__LOCAL_TRACKS__ = res.tracks;
                     }
-                  }).catch(err => console.log('Scan error:', err));
+                  }).catch(function(err) {
+                    console.log('Scan error:', err);
+                  });
                 } else {
                   setTimeout(triggerAutoScan, 500);
                 }
               }
               triggerAutoScan();
 
-              // 2. مانع الخرفشة (Limiter) وتفعيل الـ Dynamic Bar (Infinix Magic Ring)
               let audioCtx = null;
               function initLimiter(audio) {
                 try {
@@ -202,4 +197,27 @@ jobs:
                   const comp = audioCtx.createDynamicsCompressor();
                   comp.threshold.setValueAtTime(-1.0, audioCtx.currentTime);
                   comp.knee.setValueAtTime(0.0, audioCtx.currentTime);
-                  comp.ratio.setValueAtTime(2
+                  comp.ratio.setValueAtTime(20.0, audioCtx.currentTime);
+                  comp.attack.setValueAtTime(0.001, audioCtx.currentTime);
+                  comp.release.setValueAtTime(0.1, audioCtx.currentTime);
+
+                  src.connect(hp);
+                  hp.connect(comp);
+                  comp.connect(audioCtx.destination);
+                } catch(e){}
+              }
+
+              document.addEventListener('play', function(e) {
+                if (e.target && e.target.tagName === 'AUDIO') {
+                  const audio = e.target;
+                  audio.volume = 1.0;
+                  initLimiter(audio);
+
+                  if ('mediaSession' in navigator) {
+                    navigator.mediaSession.metadata = new MediaMetadata({
+                      title: document.title || 'SoundPulse Track',
+                      artist: 'SoundPulse Pro',
+                      album: 'Offline Local Library'
+                    });
+                    navigator.mediaSession.playbackState = 'playing';
+                    navigator.mediaSession.setActionHandler('play',
