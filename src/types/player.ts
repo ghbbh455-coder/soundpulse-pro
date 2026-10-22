@@ -94,7 +94,7 @@ export const DEFAULT_SPATIAL_SETTINGS: Spatial3DSettings = {
 };
 
 export const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
-  volume: 85,
+  volume: 100,
   volumeBoost: 100,
   playbackRate: 1.0,
   repeatMode: 'off',

@@ -26,7 +26,14 @@ import {
   defaultAudioSettings,
 } from './services/storage';
 import { audioEngine } from './services/audioEngine';
+import { mediaSessionManager } from './services/mediaSessionManager';
+import {
+  pickAndScanMusicFolder,
+  autoSyncSavedMusicFolder,
+  scanFromFileInput,
+} from './services/folderScanner';
 import { getThemeClasses } from './utils/themeHelper';
+import { androidBackButtonManager } from './services/androidBackButtonManager';
 import { motion, AnimatePresence } from 'motion/react';
 import { Navbar } from './components/Navbar';
 import { PlayerBar } from './components/PlayerBar';
@@ -79,6 +86,8 @@ export default function App() {
   const [showSpatialModal, setShowSpatialModal] = useState(false);
   const [showKaraokeModal, setShowKaraokeModal] = useState(false);
   const [showBrainwaveModal, setShowBrainwaveModal] = useState(false);
+  const [folderScanToast, setFolderScanToast] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
+  const [exitToast, setExitToast] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -102,16 +111,124 @@ export default function App() {
       document.documentElement.lang = savedTheme.language;
 
       const { tracks: loadedTracks, playlists: loadedPlaylists } = await initializeDefaultLibrary();
-      setTracks(loadedTracks);
-      setPlaylists(loadedPlaylists);
-      setQueue(loadedTracks);
+      let allTracks = loadedTracks;
 
-      if (loadedTracks.length > 0) {
-        setCurrentTrack(loadedTracks[0]);
+      // Auto-scan saved music folder on Android if previously granted
+      try {
+        const syncRes = await autoSyncSavedMusicFolder(loadedTracks);
+        if (syncRes && syncRes.newTracks.length > 0) {
+          allTracks = [...loadedTracks, ...syncRes.newTracks];
+        }
+      } catch (err) {
+        console.warn('Auto folder sync on startup notice:', err);
+      }
+
+      setTracks(allTracks);
+      setPlaylists(loadedPlaylists);
+      setQueue(allTracks);
+
+      if (allTracks.length > 0) {
+        setCurrentTrack(allTracks[0]);
       }
     }
     loadInitialData();
   }, []);
+
+  // Hardware Back Button Handling (@capacitor/app & window.history popstate)
+  useEffect(() => {
+    const unregisterExit = androidBackButtonManager.onExitConfirm(() => {
+      setExitToast(true);
+      setTimeout(() => setExitToast(false), 2200);
+    });
+
+    const unregisterHandler = androidBackButtonManager.register(() => {
+      // 1. Context menu
+      if (globalContextMenuTrack) {
+        setGlobalContextMenuTrack(null);
+        setGlobalContextMenuAnchor(null);
+        return true;
+      }
+      // 2. Modals
+      if (editingTrack) {
+        setEditingTrack(null);
+        return true;
+      }
+      if (trimmingTrack) {
+        setTrimmingTrack(null);
+        return true;
+      }
+      if (showSpatialModal) {
+        setShowSpatialModal(false);
+        return true;
+      }
+      if (showKaraokeModal) {
+        setShowKaraokeModal(false);
+        return true;
+      }
+      if (showBrainwaveModal) {
+        setShowBrainwaveModal(false);
+        return true;
+      }
+      if (showSleepTimerModal) {
+        setShowSleepTimerModal(false);
+        return true;
+      }
+      if (showThemeModal) {
+        setShowThemeModal(false);
+        return true;
+      }
+      if (showVideoModal) {
+        setShowVideoModal(false);
+        return true;
+      }
+      if (showDriveMode) {
+        setShowDriveMode(false);
+        return true;
+      }
+      if (showInsights) {
+        setShowInsights(false);
+        return true;
+      }
+      // 3. Liquid Now Playing Screen (return to library)
+      if (showLiquidPlayer) {
+        setShowLiquidPlayer(false);
+        return true;
+      }
+      // 4. Settings Screen
+      if (showSettings) {
+        setShowSettings(false);
+        return true;
+      }
+      // 5. If on another tab, return to main music tab
+      if (currentTab !== 'music') {
+        setCurrentTab('music');
+        return true;
+      }
+
+      // If on main screen with no open modals, return false so double-tap exit triggers
+      return false;
+    });
+
+    return () => {
+      unregisterHandler();
+      unregisterExit();
+    };
+  }, [
+    globalContextMenuTrack,
+    editingTrack,
+    trimmingTrack,
+    showSpatialModal,
+    showKaraokeModal,
+    showBrainwaveModal,
+    showSleepTimerModal,
+    showThemeModal,
+    showVideoModal,
+    showDriveMode,
+    showInsights,
+    showLiquidPlayer,
+    showSettings,
+    currentTab,
+  ]);
 
   // Track listening statistics seconds
   useEffect(() => {
@@ -147,11 +264,23 @@ export default function App() {
     const audio = audioRef.current;
     if (!audio) return;
 
-    const onTimeUpdate = () => setCurrentTime(audio.currentTime);
-    const onLoadedMetadata = () => setDuration(audio.duration || 0);
+    const onTimeUpdate = () => {
+      setCurrentTime(audio.currentTime);
+      mediaSessionManager.updatePositionState(audio.currentTime, audio.duration, audio.playbackRate);
+    };
+    const onLoadedMetadata = () => {
+      setDuration(audio.duration || 0);
+      mediaSessionManager.updatePositionState(audio.currentTime, audio.duration, audio.playbackRate);
+    };
     const onEnded = () => handleTrackEnded();
-    const onPlay = () => setIsPlaying(true);
-    const onPause = () => setIsPlaying(false);
+    const onPlay = () => {
+      setIsPlaying(true);
+      mediaSessionManager.updatePlaybackState(true);
+    };
+    const onPause = () => {
+      setIsPlaying(false);
+      mediaSessionManager.updatePlaybackState(false);
+    };
 
     audio.addEventListener('timeupdate', onTimeUpdate);
     audio.addEventListener('loadedmetadata', onLoadedMetadata);
@@ -327,6 +456,119 @@ export default function App() {
     if (audioRef.current) {
       audioRef.current.currentTime = secs;
       setCurrentTime(secs);
+      mediaSessionManager.updatePositionState(secs, audioRef.current.duration, audioRef.current.playbackRate);
+    }
+  };
+
+  // Register Android System Media Session Handlers (Infinix Magic Ring, Lockscreen & Notification Controls)
+  useEffect(() => {
+    mediaSessionManager.registerHandlers({
+      onPlay: () => {
+        const audio = audioRef.current;
+        if (audio && audio.paused) {
+          audioEngine.init(audio);
+          audioEngine.resume();
+          audio.play().catch(console.warn);
+          setIsPlaying(true);
+        }
+      },
+      onPause: () => {
+        const audio = audioRef.current;
+        if (audio && !audio.paused) {
+          audio.pause();
+          setIsPlaying(false);
+        }
+      },
+      onNext: () => handleNext(),
+      onPrev: () => handlePrev(),
+      onSeekTo: (secs) => handleSeek(secs),
+      onSeekBackward: (offset) => {
+        const audio = audioRef.current;
+        if (audio) {
+          const target = Math.max(0, audio.currentTime - offset);
+          handleSeek(target);
+        }
+      },
+      onSeekForward: (offset) => {
+        const audio = audioRef.current;
+        if (audio) {
+          const target = Math.min(audio.duration || 0, audio.currentTime + offset);
+          handleSeek(target);
+        }
+      },
+      onStop: () => {
+        const audio = audioRef.current;
+        if (audio) {
+          audio.pause();
+          audio.currentTime = 0;
+          setIsPlaying(false);
+        }
+      },
+    });
+  }, [queue, currentTrack, audioSettings.isShuffle]);
+
+  // Sync System Media Session Metadata (Infinix Magic Ring & System Player)
+  useEffect(() => {
+    mediaSessionManager.updateMetadata(currentTrack);
+    if (audioRef.current && currentTrack) {
+      mediaSessionManager.updatePositionState(
+        audioRef.current.currentTime,
+        audioRef.current.duration,
+        audioRef.current.playbackRate
+      );
+    }
+  }, [currentTrack]);
+
+  // Folder Scanner Handlers (Auto-Scan Music Folder on Android)
+  const handlePickAndScanFolder = async () => {
+    try {
+      const result = await pickAndScanMusicFolder(tracks);
+      if (result) {
+        if (result.newTracks.length > 0) {
+          const updated = [...tracks, ...result.newTracks];
+          setTracks(updated);
+          setQueue(updated);
+          setFolderScanToast({
+            message: `تم فحص "${result.folderName}" بنجاح وإضافة ${result.newTracks.length} أغنية جديدة إلى المكتبة!`,
+            type: 'success',
+          });
+        } else {
+          setFolderScanToast({
+            message: `تم فحص "${result.folderName}". جميع المقاطع (${result.totalScanned}) موجودة مسبقاً في القائمة.`,
+            type: 'info',
+          });
+        }
+        setTimeout(() => setFolderScanToast(null), 4000);
+      }
+    } catch (e: any) {
+      setFolderScanToast({
+        message: 'حدث خطأ أثناء فحص المجلد أو تم إلغاء الإذن.',
+        type: 'error',
+      });
+      setTimeout(() => setFolderScanToast(null), 4000);
+    }
+  };
+
+  const handleScanFromFileInput = async (fileList: FileList) => {
+    try {
+      const result = await scanFromFileInput(fileList, tracks);
+      if (result.newTracks.length > 0) {
+        const updated = [...tracks, ...result.newTracks];
+        setTracks(updated);
+        setQueue(updated);
+        setFolderScanToast({
+          message: `تم استيراد ${result.newTracks.length} مقطع بنجاح من مجلد "${result.folderName}"!`,
+          type: 'success',
+        });
+      } else {
+        setFolderScanToast({
+          message: `تم فحص ${result.totalScanned} ملف، ولا توجد ملفات صوت جديدة غير مضافة.`,
+          type: 'info',
+        });
+      }
+      setTimeout(() => setFolderScanToast(null), 4000);
+    } catch (e) {
+      console.warn('Folder file input error:', e);
     }
   };
 
@@ -574,6 +816,8 @@ export default function App() {
                 onTogglePlay={handleTogglePlay}
                 onToggleFavorite={handleToggleFavorite}
                 onAddFiles={handleAddFiles}
+                onPickAndScanFolder={handlePickAndScanFolder}
+                onScanFromFileInput={handleScanFromFileInput}
                 onDeleteTrack={handleDeleteTrack}
                 onAddToPlaylist={handleAddToPlaylist}
                 onCreatePlaylistAndAdd={handleCreatePlaylistAndAdd}
@@ -912,6 +1156,41 @@ export default function App() {
         accentHex={accentHex}
         theme={theme}
       />
+
+      {/* Dynamic Folder Scan Notification Toast */}
+      <AnimatePresence>
+        {folderScanToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            className={`fixed bottom-24 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-2xl text-xs font-bold shadow-2xl backdrop-blur-xl border flex items-center gap-2 max-w-sm text-center ${
+              folderScanToast.type === 'success'
+                ? 'bg-emerald-950/90 border-emerald-500/40 text-emerald-200 shadow-emerald-500/20'
+                : folderScanToast.type === 'error'
+                ? 'bg-rose-950/90 border-rose-500/40 text-rose-200 shadow-rose-500/20'
+                : 'bg-slate-900/90 border-cyan-500/40 text-cyan-200 shadow-cyan-500/20'
+            }`}
+          >
+            <span>{folderScanToast.message}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Android Hardware Back Button Double-Tap Exit Toast */}
+      <AnimatePresence>
+        {exitToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 30, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.9 }}
+            className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 px-5 py-2.5 rounded-full bg-slate-900/95 border border-white/20 text-white text-xs font-bold shadow-2xl backdrop-blur-xl flex items-center gap-2"
+          >
+            <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+            <span>اضغط زر الرجوع مرة أخرى للخروج من التطبيق</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

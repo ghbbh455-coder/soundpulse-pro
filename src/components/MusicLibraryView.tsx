@@ -3,6 +3,7 @@ import { Track, Playlist, SortOption, ThemeConfig } from '../types/player';
 import { translations } from '../utils/translations';
 import { motion, AnimatePresence } from 'motion/react';
 import { TrackContextMenu, AnchorRect } from './TrackContextMenu';
+import { PWAInstallButton } from './PWAInstallButton';
 import {
   Music,
   Search,
@@ -13,6 +14,8 @@ import {
   Play,
   Video,
   X,
+  FolderSearch,
+  FolderSync,
 } from 'lucide-react';
 
 interface MusicLibraryViewProps {
@@ -28,6 +31,8 @@ interface MusicLibraryViewProps {
   onTogglePlay: () => void;
   onToggleFavorite: (trackId: string) => void;
   onAddFiles: (files: FileList) => Promise<void>;
+  onPickAndScanFolder?: () => Promise<void>;
+  onScanFromFileInput?: (files: FileList) => Promise<void>;
   onDeleteTrack: (trackId: string) => Promise<void>;
   onAddToPlaylist: (playlistId: string, trackId: string) => Promise<void>;
   onCreatePlaylistAndAdd?: (playlistName: string, trackId: string) => Promise<void>;
@@ -51,6 +56,8 @@ export const MusicLibraryView: React.FC<MusicLibraryViewProps> = ({
   onAddToQueue = () => {},
   onToggleFavorite,
   onAddFiles,
+  onPickAndScanFolder,
+  onScanFromFileInput,
   onDeleteTrack,
   onAddToPlaylist,
   onCreatePlaylistAndAdd,
@@ -72,6 +79,7 @@ export const MusicLibraryView: React.FC<MusicLibraryViewProps> = ({
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
 
   // Keyboard shortcut '/' focuses search
   useEffect(() => {
@@ -204,12 +212,44 @@ export const MusicLibraryView: React.FC<MusicLibraryViewProps> = ({
             </select>
           </div>
 
+          {/* Auto-Scan Music Folder Button (Requested Feature [1]) */}
+          <button
+            onClick={() => {
+              if (onPickAndScanFolder) {
+                onPickAndScanFolder();
+              } else {
+                folderInputRef.current?.click();
+              }
+            }}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-gradient-to-r from-cyan-500/20 to-blue-500/20 text-cyan-300 border border-cyan-500/40 hover:border-cyan-400 transition cursor-pointer shrink-0 shadow-sm hover:brightness-110 active:scale-95"
+            title="فحص مجلدات الهاتف تلقائياً وإضافة جميع ملفات الصوت (MP3, WAV, FLAC, M4A)"
+          >
+            <FolderSearch className="w-4 h-4 text-cyan-400" />
+            <span className="text-xs font-bold hidden md:inline">فحص مجلد الهاتف</span>
+          </button>
+
+          {/* Directory Picker Fallback Input for mobile browsers */}
+          <input
+            ref={folderInputRef}
+            type="file"
+            {...({ webkitdirectory: '', directory: '' } as any)}
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files && onScanFromFileInput) {
+                onScanFromFileInput(e.target.files);
+              } else if (e.target.files) {
+                onAddFiles(e.target.files);
+              }
+            }}
+          />
+
           {/* Quick Upload Icon Button */}
           <button
             onClick={() => fileInputRef.current?.click()}
             className="p-2.5 rounded-2xl text-black font-bold transition shadow-md hover:brightness-110 active:scale-95 cursor-pointer shrink-0"
             style={{ backgroundColor: accentHex }}
-            title="استيراد ملفات صوتية أو فيديو"
+            title="استيراد ملفات فردية"
           >
             <Upload className="w-4 h-4" />
           </button>
@@ -223,6 +263,9 @@ export const MusicLibraryView: React.FC<MusicLibraryViewProps> = ({
               if (e.target.files) onAddFiles(e.target.files);
             }}
           />
+
+          {/* In-App PWA Install Button */}
+          <PWAInstallButton accentHex={accentHex} />
         </div>
 
         {/* Filter Chips Bar */}

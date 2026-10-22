@@ -12,6 +12,7 @@ class AudioEngine {
   private sourceNode: MediaElementAudioSourceNode | null = null;
 
   // EQ and filters
+  private subsonicFilter: BiquadFilterNode | null = null; // Subsonic speaker protector filter (25Hz highpass)
   private eqFilters: BiquadFilterNode[] = [];
   private bassFilter: BiquadFilterNode | null = null;
   private trebleFilter: BiquadFilterNode | null = null;
@@ -27,8 +28,9 @@ class AudioEngine {
   private vocalGainRight: GainNode | null = null;
   private vocalBandFilter: BiquadFilterNode | null = null;
 
-  // Dynamics & Spatial
+  // Dynamics, Limiter & Spatial
   private normalizerCompressor: DynamicsCompressorNode | null = null;
+  private brickwallLimiter: DynamicsCompressorNode | null = null; // High-precision anti-clipping brickwall limiter
   private spatialPanner: PannerNode | null = null;
   private stereoPanner: StereoPannerNode | null = null;
 
@@ -75,6 +77,12 @@ class AudioEngine {
         this.sourceNode = this.audioCtx.createMediaElementSource(mediaElement);
       }
 
+      // 0. Subsonic Speaker Protector (Butterworth Highpass at 25Hz to eliminate cone-rattling rumbling)
+      this.subsonicFilter = this.audioCtx.createBiquadFilter();
+      this.subsonicFilter.type = 'highpass';
+      this.subsonicFilter.frequency.value = 25;
+      this.subsonicFilter.Q.value = 0.707;
+
       // 1. 10-Band EQ Filters
       this.eqFilters = EQ_FREQUENCIES.map((freq) => {
         const filter = this.audioCtx!.createBiquadFilter();
@@ -85,16 +93,16 @@ class AudioEngine {
         return filter;
       });
 
-      // 2. Dedicated Bass Boost (LowShelf at 85Hz)
+      // 2. Dedicated Bass Boost (Calibrated LowShelf at 80Hz)
       this.bassFilter = this.audioCtx.createBiquadFilter();
       this.bassFilter.type = 'lowshelf';
-      this.bassFilter.frequency.value = 85;
+      this.bassFilter.frequency.value = 80;
       this.bassFilter.gain.value = 2;
 
-      // 3. Dedicated Treble Clarity (HighShelf at 10kHz)
+      // 3. Dedicated Treble Clarity (HighShelf at 9000Hz)
       this.trebleFilter = this.audioCtx.createBiquadFilter();
       this.trebleFilter.type = 'highshelf';
-      this.trebleFilter.frequency.value = 10000;
+      this.trebleFilter.frequency.value = 9000;
       this.trebleFilter.gain.value = 0;
 
       // 4. Neuro-Sleep Low-Pass Filter (default wide open at 20kHz)
@@ -126,7 +134,7 @@ class AudioEngine {
         this.stereoPanner.pan.value = 0;
       }
 
-      // 8. Dynamics Compressor (Normalizer / Soft Limiter)
+      // 8. Dynamics Compressor (Normalizer / Soft ReplayGain Stage)
       this.normalizerCompressor = this.audioCtx.createDynamicsCompressor();
       this.normalizerCompressor.threshold.setValueAtTime(-14, this.audioCtx.currentTime);
       this.normalizerCompressor.knee.setValueAtTime(12, this.audioCtx.currentTime);
@@ -134,18 +142,29 @@ class AudioEngine {
       this.normalizerCompressor.attack.setValueAtTime(0.005, this.audioCtx.currentTime);
       this.normalizerCompressor.release.setValueAtTime(0.2, this.audioCtx.currentTime);
 
-      // 9. Master Gain Node (handles volume & 300% boost)
+      // 9. Master Gain Node (Unity Gain 1.0 synced with Android System Media volume)
       this.gainNode = this.audioCtx.createGain();
       this.updateMasterGain();
 
-      // 10. 60fps Real-Time Visualizer Analyser Node
+      // 10. Hi-Fi True Brickwall Limiter (placed downstream of gain to catch all peaks and prevent 0dBFS clipping)
+      this.brickwallLimiter = this.audioCtx.createDynamicsCompressor();
+      this.brickwallLimiter.threshold.setValueAtTime(-1.0, this.audioCtx.currentTime);
+      this.brickwallLimiter.knee.setValueAtTime(2.0, this.audioCtx.currentTime);
+      this.brickwallLimiter.ratio.setValueAtTime(20.0, this.audioCtx.currentTime);
+      this.brickwallLimiter.attack.setValueAtTime(0.001, this.audioCtx.currentTime);
+      this.brickwallLimiter.release.setValueAtTime(0.05, this.audioCtx.currentTime);
+
+      // 11. 60fps Real-Time Visualizer Analyser Node
       this.analyserNode = this.audioCtx.createAnalyser();
       this.analyserNode.fftSize = 512;
       this.analyserNode.smoothingTimeConstant = 0.82;
 
       // Connect the primary signal chain:
-      // source -> bass -> eq[0..9] -> treble -> tubeWaveShaper -> neuroFilter -> spatialPanner -> compressor -> gain -> analyser -> destination
+      // source -> subsonic -> bass -> eq[0..9] -> treble -> tubeWaveShaper -> neuroFilter -> spatialPanner -> normalizerCompressor -> gain -> brickwallLimiter -> analyser -> destination
       let currentNode: AudioNode = this.sourceNode;
+
+      currentNode.connect(this.subsonicFilter);
+      currentNode = this.subsonicFilter;
 
       currentNode.connect(this.bassFilter);
       currentNode = this.bassFilter;
@@ -174,7 +193,8 @@ class AudioEngine {
 
       currentNode.connect(this.normalizerCompressor);
       this.normalizerCompressor.connect(this.gainNode);
-      this.gainNode.connect(this.analyserNode);
+      this.gainNode.connect(this.brickwallLimiter);
+      this.brickwallLimiter.connect(this.analyserNode);
       this.analyserNode.connect(this.audioCtx.destination);
 
       // Set up Binaural Beats sub-engine

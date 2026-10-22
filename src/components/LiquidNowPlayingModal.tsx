@@ -658,41 +658,20 @@ export const LiquidNowPlayingModal: React.FC<LiquidNowPlayingModalProps> = ({
           </button>
         </div>
 
-        {/* 300% Volume Boost Glass Slider Bar */}
-        <div className="p-3 rounded-2xl bg-black/40 border border-white/10 space-y-2">
-          <div className="flex items-center justify-between text-xs font-semibold">
-            <span className="flex items-center gap-1.5 text-slate-300">
-              <Zap className={`w-3.5 h-3.5 ${isTurbo ? 'text-amber-400 animate-pulse' : 'text-cyan-400'}`} />
-              <span>مضخم الصوت (Volume Boost)</span>
-            </span>
-            <span
-              className={`font-mono font-bold px-2 py-0.5 rounded-md text-[11px] ${
-                isTurbo ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'text-cyan-400'
-              }`}
-            >
-              {settings.volumeBoost}% {isTurbo ? '⚡ TURBO' : ''}
-            </span>
+        {/* System Media Volume Unified Banner (Requested by User) */}
+        <div className="p-3 rounded-2xl bg-black/40 border border-white/10 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
+              <Volume2 className="w-4 h-4" />
+            </div>
+            <div>
+              <h5 className="text-xs font-bold text-white">الصوت موحد مع أزرار الهاتف</h5>
+              <p className="text-[10px] text-slate-400">تحكم بالصوت مباشرة عبر مفاتيح الهاتف مع حماية Limiter مانعة للخرفشة</p>
+            </div>
           </div>
-
-          <input
-            type="range"
-            min="0"
-            max="300"
-            step="5"
-            value={settings.volumeBoost}
-            onChange={(e) => onUpdateSettings({ volumeBoost: Number(e.target.value) })}
-            className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer"
-            style={{
-              background: `linear-gradient(to right, #00f2fe 0%, #10b981 33%, #f59e0b 66%, #f43f5e 100%)`,
-            }}
-          />
-
-          <div className="flex justify-between text-[10px] font-mono text-slate-400">
-            <span>0%</span>
-            <span className="text-cyan-400">100% عادي</span>
-            <span className="text-amber-400">200% مضاعف</span>
-            <span className="text-rose-400 font-bold">300% أقصى قدرة</span>
-          </div>
+          <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
+            100% UNITY
+          </span>
         </div>
 
         {/* Signature Watermark Badge Requested by User */}

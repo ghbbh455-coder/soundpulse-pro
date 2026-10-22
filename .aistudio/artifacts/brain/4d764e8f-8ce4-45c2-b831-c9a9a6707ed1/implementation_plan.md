@@ -1,136 +1,133 @@
-# SoundPulse Pro - Audio & Video Studio Player
+# SoundPulse Pro — Next-Gen Offline Android Media Player
 
-A comprehensive, fully offline audio and video player featuring 300% volume boosting, client-side video-to-audio conversion, 10-band graphic equalizer, real-time frequency spectrum visualizer, customizable glassmorphic themes, and auto-sorting playlists.
+خطة التطوير وإعادة المعايرة الشاملة لتطبيق **SoundPulse Pro** ليعمل كمشغل وسائط محلي احترافي لنظام أندرويد بدون إنترنت بنسبة 100%، متوافق كلياً مع كبسولة النظام (Dynamic Island / Infinix Magic Ring) وشريط الإشعارات، مع القضاء الجذري على تشويش وخرفشة الصوت عبر معمارية Web Audio API محسنة ومحدّد ديناميكي (Hi-Fi Brickwall Limiter)، وفحص تلقائي لمجلدات الجهاز وتوحيد الصوت مع أزرار الهاتف.
 
-### User Review & Critical Decisions
+---
+
+## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The architectural baseline and styling choices have been aligned with your preferences:
-
-- **Confirmed Aesthetic**: Cyber Neon with subtle glassmorphism, glowing accents, and dark/light mode toggle with comprehensive UI customization (custom accent colors, layout density, background gradients, and player styles).
-- **Confirmed Video-to-Audio Workflow**: Direct in-browser video-to-audio extraction saving to offline storage, with a dual-mode video player toggle allowing seamless switching between audio-only listening and full/PiP video playback.
-- **Confirmed Audio Visualizer**: Live real-time frequency spectrum bars with bass reactive pulse, plus alternate views (rotating vinyl disc and synced lyrics).
-- **Audio Engine**: Web Audio API GainNode pipeline providing distortion-managed 300% (3.0x) volume boost and a 10-band equalizer with bass boost and 3D spatial virtualizer.
-- **Offline Persistence**: Browser-native IndexedDB for storing audio tracks, extracted MP3/WAV/WebM audio, video files, custom playlists, and user theme settings with 0kb external server dependency.
-- **Branding & Signature**: A refined, elegant "by Abdallah Mahmoud" signature badge anchored in the bottom playback controller.
+> **القرارات المؤكدة من المستخدم (Confirmed Choices):**
+> 1. **التعرف التلقائي على الموسيقى**: منح إذن الوصول لمجلد الموسيقى لمرة واحدة (`Directory Handle`) مع مزامنة وفحص تلقائي في الخلفية عند كل فتح للتطبيق دون الحاجة لرفع يدوي متكرر.
+> 2. **معايرة الصوت والحد من التشويه**: تفعيل محدد صوت متوازن عالي الدقة **(Hi-Fi Balanced Limiter)** لمنع الـ Digital Clipping نهائياً عند رفع الترددات مع إبقاء صوت البيس عميقاً ومضبوطاً لسماعات الهاتف والسماعات الخارجية.
+> 3. **توحيد مستوى الصوت مع النظام**: قفل مستوى كسب الصوت الداخلي على الحد الأقصى (100% Unity Gain) وإخفاء شريط الصوت البرمجي الداخلي بالكامل للاعتماد الحصري على أزرار الصوت الحقيقية بالهاتف (`Hardware Media Keys`).
 
 ---
 
-### 1. Overview & Core Concept
+## 1. Overview & Core Concept
 
-- **What It Does**: SoundPulse Pro is a studio-grade media player engineered for audiophiles and power users. Users can drag and drop or import local music (MP3, WAV, FLAC, AAC, OGG) and video files (MP4, WebM, MKV). It extracts audio from video with one click, boosts volume up to 300%, applies a 10-band master equalizer with custom presets, renders audio frequency visualizers, manages smart playlists with automatic sorting (title, duration, date, artist, most played), and works 100% offline.
-- **Target Audience**: Music enthusiasts, students, and video watchers who want an all-in-one local media player with advanced audio control, theme customization, and privacy without relying on internet connectivity.
-- **Key Value**: Studio sound manipulation (300% boost + 10-band EQ) paired with video-to-audio conversion and client-side UI theming without any cloud backend required.
-
----
-
-### 2. User Experience & Visual Design
-
-#### Key User Flows
-1. **Library & File Ingestion**:
-   - User uploads audio or video files or folders via drag-and-drop or file picker.
-   - Files are indexed with duration, format, title, artist, and waveforms into IndexedDB.
-   - Built-in demo tracks allow instant testing upon first launch.
-2. **Playback & Full Player Experience**:
-   - Bottom persistent player bar with play/pause, seek scrubber, track info, repeat/shuffle, volume boost slider (up to 300%), and the signature `"by Abdallah Mahmoud"`.
-   - Expanding to full-screen or side-panel mode reveals the live audio frequency spectrum visualizer, 10-band equalizer, and lyrics/video viewport.
-3. **Video-to-Audio Extraction & Video Watching**:
-   - In the Video Hub tab, users can watch imported videos in a clean video player (with fullscreen, speed controls, loop, and PiP).
-   - "Extract Audio" button instantly decodes the video's audio track, processes it via offline AudioContext, and creates a standalone high-quality audio track in the Music Library.
-4. **10-Band Equalizer & 300% Volume Boost**:
-   - Equalizer tab features 10 frequency sliders (32Hz, 64Hz, 125Hz, 250Hz, 500Hz, 1kHz, 2kHz, 4kHz, 8kHz, 16kHz) with Bass Boost knob, Virtualizer knob, and presets (Flat, Bass Boost, Rock, Pop, Jazz, Electronic, Vocal, Acoustic).
-   - Volume boost knob/slider goes smoothly from 0% to 100% (standard) and unlocks the turbo boost zone up to 300% with soft limiter protection against severe digital clipping.
-5. **Smart Playlists & Automatic Sorting**:
-   - Users create custom playlists or use Smart Playlists (Favorites, Most Played, Recently Added, Videos).
-   - One-click auto-sorting: by Title (A-Z / Z-A), Artist, Duration (shortest/longest), Date Added, or Play Count.
-6. **Full UI Customization & Dark/Light Themes**:
-   - Theme Studio modal allows toggling Dark / Light / Midnight / Cyberpunk / AMOLED Black.
-   - Accent color picker (Neon Cyan, Electric Violet, Emerald Glow, Sunset Amber, Crimson Red).
-   - Visualizer density, background blur, and player bar layout controls saved permanently in local storage.
-
-#### Visual Identity & Theme
-- **Aesthetic Direction**: Cyber Neon with subtle glassmorphic backdrop filters, sleek metallic hairline borders, and dark/light adaptive surfaces.
-- **Color Tokens**:
-  - *Dark Canvas*: Deep obsidian `#0a0b10` with slate structural cards (`#121520`).
-  - *Light Canvas*: Clean pearl `#f8fafc` with subtle frosted cards (`#ffffff`).
-  - *Accents*: Neon Cyan `#00f2fe` to Electric Violet `#4facfe` gradient, Emerald Glow `#10b981` for active boosters.
-- **Typography**: Clean modern sans-serif (`system-ui`, `Outfit` / `Plus Jakarta Sans`) with tabular monospace numerals for playback timers and EQ decibel levels.
-- **Signature Badge**: Elegant micro-badge `"by Abdallah Mahmoud"` rendered with subtle glow in the bottom player bar.
+- **الهدف الرئيسي**: تحويل SoundPulse Pro من مجرد مشغل ويب إلى مشغل أندرويد مستقل (PWA) فائق الجودة، يعمل بدون اتصال إنترنت، يتفاعل مع النظام كأنه تطبيق أصلي (Native Player).
+- **الجمهور المستهدف**: عشاق الصوتيات والموسيقى على هواتف أندرويد (خصوصاً أجهزة Infinix و Tecno و Samsung و Xiaomi) الذين يبحثون عن تجربة صوتية نقية وخالية من التشويش مع دعم كبسولة الإشعارات التفاعلية.
+- **القيمة المضافة**:
+  - كشف ومزامنة سريعة لملفات `MP3, WAV, FLAC, M4A, OGG, AAC` مباشرة من ذاكرة الهاتف وتخزين البيانات الوصفية محلياً في IndexedDB.
+  - إخراج صوتي نقي وخالٍ من الخرفشة (Zero Crackling) بفضل مسار معالجة صوتية يبدأ بفلتر حماية ترددات الرنين المنخفضة وينتهي بمحدد ديناميكي مانع لتجاوز 0dBFS.
+  - تكامل 100% مع واجهة `navigator.mediaSession` لتشغيل ميزات Magic Ring وكبسولة الجزيرة الديناميكية وشاشات القفل وساعات البلوتوث.
 
 ---
 
-### 3. Key Product Decisions & Trade-Offs
+## 2. User Experience & Visual Design
 
-- **Decision 1: Client-Side Audio & Video Storage via IndexedDB**
-  - *Chosen Approach*: Store audio and video files as `Blob` objects directly in browser IndexedDB along with metadata and playlist associations.
-  - *Why*: Enables true offline operation, works across page reloads, and respects user privacy with zero cloud upload.
-- **Decision 2: Web Audio API Pipeline for 300% Boost & 10-Band EQ**
-  - *Chosen Approach*: Route `HTMLMediaElement` audio through an `AudioContext` connected to a chain of 10 `BiquadFilterNode`s, a `DynamicsCompressorNode` (soft limiter to prevent harsh clipping at 300%), an `AnalyserNode` for the visualizer, and a `GainNode` scaled up to `3.0`.
-  - *Why*: Delivers studio-level real-time sound control and 300% volume amplification without distortion crashes.
-- **Decision 3: Video-to-Audio Extraction via Offline Audio Decoding**
-  - *Chosen Approach*: Read video file buffer -> decode via `AudioContext.decodeAudioData` -> encode to uncompressed WAV blob or capture via `MediaStreamAudioDestinationNode` and `MediaRecorder` -> store in Music Library.
-  - *Why*: 100% in-browser, instantaneous, requires no external FFmpeg server or wasm heavy downloads.
+- **التصميم العام (Liquid Glassmorphism & Ergonomics)**:
+  - واجهة زجاجية بلورية سائلة متوافقة مع شاشات الهواتف ومريحة للاستخدام بيد واحدة (Thumb-Zone Optimization).
+  - إخفاء منزلق الصوت المزدوج لتنظيف الواجهة وفسح المجال لعناصر التحكم التفاعلية وموجات التردد الحية.
+- **إشعار النظام وكبسولة Magic Ring / Dynamic Island**:
+  - عرض فوري لغلاف الألبوم الفني، واسم الأغنية والفنان، والمدة الحالية للتشغيل على شريط الإشعارات وكبسولة الكاميرا بالهاتف.
+  - دعم كامل لأزرار التقديم والتأخير (Seek 10s)، التخطي، الإيقاف، والاستئناف من قفل الشاشة ومركز الإشعارات.
+- **مزامنة مجلد الموسيقى التلقائية**:
+  - بطاقة ترحيبية أو زر أنيق في مكتبة الصوت: *"ربط مجلد الموسيقى بالهاتف"* يطلب المجلد لمرة واحدة.
+  - مؤشر مزامنة خفيف يوضح عدد الملفات المكتشفة تلقائياً (`48 أغنية متوفرة`).
+- **تجربة أوفلاين نقية (100% Offline)**:
+  - إزالة أي خطوط أو مصادر تعتمد على شبكات CDN الخارجية.
+  - استخدام حزمة خطوط النظام العصرية (San Francisco / Roboto / Tajawal المحلية) لضمان العمل الفوري والسلس دون أي اتصال إنترنت.
+  - توفير زر تثبيت مباشر في التطبيق (`PWA Install`) يعمل مع متصفحات أندرويد وكروم.
 
 ---
 
-### 4. Technical Architecture & Data Strategy
+## 3. Key Product Decisions & Trade-Offs
+
+### القرار 1: بنية مسار الصوت ومنع الخرفشة (Anti-Crackling Audio Graph)
+- **النهج المختار**: إعادة تنظيم سلسلة العقد (Web Audio Graph) بحيث يتم وضع فلتر قطع الترددات الخارقة تحت الصوتية (`Subsonic HighPass Filter at 25Hz`) في البداية، متبوعاً بمعادل الـ 10 قنوات ومضخم الدفء، مع وضع الـ **DynamicsCompressorNode كمحدد أخير (Final Brickwall Limiter)** يسبق مكبر الوجهة (`destination`).
+- **السبب**: عند رفع ترددات الـ Bass أو الـ Treble في المعادل، تتجاوز سعة الإشارة مستوى 0dBFS مما يسبب تقطيعاً حاداً وخشونة في صوت السماعة الصغيرة للهاتف. المحدد الأخير يمتص هذه القمم فوراً في زمن هجوم يبلغ 1 مللي ثانية (`attack: 0.001s`) مع نسبة ضغط حادة، مما يضمن خروج صوت عالٍ ونظيف بدون أي تشويه رقمي.
+
+### القرار 2: توحيد الصوت مع النظام وإلغاء الازدواجية
+- **النهج المختار**: ضبط مكبر الصوت البرمجي الداخلي على 1.0 (100% Unity Output)، وإلغاء شريط الصوت الداخلي من الشاشات.
+- **السبب**: ازدواجية الصوت تجعل المستخدم يعتقد أن الصوت منخفض أو مشوش عندما يكون صوت المشغل 30% بينما صوت الهاتف 100%، أو العكس عندما يرفع المستخدم كلاهما فيحدث تشويه رقمي. التوحيد يجعل أزرار الصوت الفعلية في الهاتف تتحكم بسلاسة في مضخم الجهاز مباشرة.
+
+### القرار 3: تقنية فحص مجلدات الهاتف المستدامة
+- **النهج المختار**: استخدام `showDirectoryPicker()` عند توفره مع تخزين المرجع (`FileSystemDirectoryHandle`) في IndexedDB، وتوفير بديل متقدم عبر `webkitdirectory` لمتصفحات الجوال التي لا تدعم الـ Handle الدائم.
+- **السبب**: يسمح للمستخدم باختيار مجلد الموسيقى لمرة واحدة، ليقوم التطبيق بعد ذلك بفحص وتحديث قائمة الأغاني تلقائياً في الخلفية في كل مرة يفتح فيها التطبيق.
+
+---
+
+## 4. Technical Architecture & Data Strategy
+
+### مخطط معمارية النظام ومسار الصوت النقي:
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                        SoundPulse Pro Architecture                     │
+│                      Android System Layer                              │
+│  [Hardware Volume Keys]  [Infinix Magic Ring / Dynamic Island]         │
+│           │                                ▲                           │
+│           │ (Native Level)                 │ (MediaMetadata & Actions) │
+│           ▼                                │                           │
+│  [Android Audio Subsystem]   [navigator.mediaSession Controller]       │
+└───────────────────────────────┬────────────────────────────────────────┘
+                                │
+┌───────────────────────────────┴────────────────────────────────────────┐
+│                       SoundPulse Pro Engine                            │
+│                                                                        │
+│  ┌───────────────────────┐             ┌────────────────────────────┐  │
+│  │ Auto-Folder Scanner   │             │ Offline IndexedDB Storage  │  │
+│  │ (DirectoryHandle sync)├────────────►│ Tracks, Playlists, Config  │  │
+│  └───────────────────────┘             └─────────────┬──────────────┘  │
+│                                                      │                 │
+│  ┌───────────────────────────────────────────────────▼──────────────┐  │
+│  │               Anti-Crackling Web Audio Signal Chain              │  │
+│  │                                                                  │  │
+│  │  [HTMLAudioElement] (Unity Volume: 1.0)                          │  │
+│  │        │                                                         │  │
+│  │        ▼                                                         │  │
+│  │  [Subsonic HighPass Filter] (25Hz Protection)                    │  │
+│  │        │                                                         │  │
+│  │        ▼                                                         │  │
+│  │  [10-Band EQ & Tube Amp & Spatial Panner]                        │  │
+│  │        │                                                         │  │
+│  │        ▼                                                         │  │
+│  │  [Hi-Fi Brickwall Limiter] (DynamicsCompressorNode: -1dB/20:1)    │  │
+│  │        │                                                         │  │
+│  │        ▼                                                         │  │
+│  │  [AnalyserNode] (60fps Visualizer)                               │  │
+│  │        │                                                         │  │
+│  │        ▼                                                         │  │
+│  │  [AudioContext.destination] ──► Crisp & Punchy Phone Output      │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
 └────────────────────────────────────────────────────────────────────────┘
-
- [ Media Files: MP3 / WAV / MP4 / WebM ]
-                  │
-                  ▼
- ┌─────────────────────────────────┐      ┌─────────────────────────────┐
- │       IndexedDB Store           │ ◄──► │    Playlist & Meta Engine   │
- │ • Tracks (Blobs + Tags)         │      │ • Smart Sorting (A-Z, Time) │
- │ • Videos (Blobs + Posters)      │      │ • Custom Playlists & Favs   │
- │ • Themes & EQ Presets           │      │ • Play History & Counters   │
- └────────────────┬────────────────┘      └──────────────┬──────────────┘
-                  │                                      │
-                  ▼                                      ▼
- ┌──────────────────────────────────────────────────────────────────────┐
- │                      Web Audio API Pipeline                          │
- │                                                                      │
- │ HTMLAudio / Video Element ──► MediaElementSourceNode                 │
- │                                    │                                 │
- │ ┌──────────────────────────────────┴───────────────────────────────┐ │
- │ │ 10-Band BiquadFilter EQ (32Hz -> 16kHz)                          │ │
- │ ├──────────────────────────────────────────────────────────────────┤ │
- │ │ Dynamics Compressor (Soft Limiter)                               │ │
- │ ├──────────────────────────────────────────────────────────────────┤ │
- │ │ GainNode (0% - 300% Volume Multiplier)                           │ │
- │ ├──────────────────────────────────────────────────────────────────┤ │
- │ │ AnalyserNode (FFT Size 256 for Frequency Bars Visualizer)        │ │
- │ └──────────────────────────────────┬───────────────────────────────┘ │
- │                                    │                                 │
- │                                    ▼                                 │
- │                              AudioDestination (Speakers / Headset)   │
- └────────────────────────────────────┬─────────────────────────────────┘
-                                      │
-                                      ▼
- ┌──────────────────────────────────────────────────────────────────────┐
- │                           User Interface                             │
- │  ┌───────────────────────┐ ┌───────────────────┐ ┌────────────────┐  │
- │  │ Music Library View    │ │ Video Player &    │ │ 10-Band EQ &   │  │
- │  │ • Tracks, Playlists   │ │ Extraction Studio │ │ 300% Booster   │  │
- │  │ • Auto-Sort Controls  │ │ • PiP & Watch     │ │ • Presets      │  │
- │  └───────────────────────┘ └───────────────────┘ └────────────────┘  │
- │  ┌────────────────────────────────────────────────────────────────┐  │
- │  │ Real-Time Frequency Spectrum Visualizer (Canvas 60 FPS)        │  │
- │  └────────────────────────────────────────────────────────────────┘  │
- │  ┌────────────────────────────────────────────────────────────────┐  │
- │  │ Persistent Bottom Player Bar & Signature ("by Abdallah Mahmoud")│  │
- │  └────────────────────────────────────────────────────────────────┘  │
- └──────────────────────────────────────────────────────────────────────┘
 ```
 
-#### State & Storage Schema
-- `Track`: `{ id, title, artist, album, duration, fileBlob, type: 'audio' | 'video', extractedFromVideo?: boolean, dateAdded, playCount, isFavorite }`
-- `Playlist`: `{ id, name, trackIds: string[], createdAt, autoSortBy: 'title' | 'date' | 'artist' | 'duration' | 'plays' }`
-- `ThemeSettings`: `{ mode: 'dark' | 'light' | 'amoled' | 'cyberpunk', accentColor: string, visualizerBars: number, glassmorphism: boolean }`
-- `AudioSettings`: `{ volumeBoost: number (0-300), eqGains: number[], preset: string, bassBoost: number }`
+### خطة تنفيذ المكونات وتعديل الملفات (Execution Steps):
 
----
+1. **`audioEngine.ts`**:
+   - تثبيت الصوت الداخلي على 1.0 (Unity Gain).
+   - إضافة فلتر حماية الترددات تحت الصوتية (`Subsonic HighPass Filter`).
+   - إعادة ترتيب مسار المعالجة لوضع `DynamicsCompressorNode` في نهاية السلسلة كمحدد جداري (Brickwall Limiter: threshold = -1dB, ratio = 20, attack = 0.001s, release = 0.05s) لمنع الخرفشة كلياً.
+   - معايرة مسبقات المعادل (Presets) بقيم متزنة تمنع الرنين التراكمي في السماعات الخارجية.
+
+2. **خدمة وسائط النظام `mediaSessionManager.ts` & تكامل `App.tsx`**:
+   - إنشاء مدير مخصص لـ `navigator.mediaSession`.
+   - تغذية البيانات: `title`, `artist`, `album`, `artwork` (بأبعاد متعددة 96x96, 128x128, 256x256, 512x512).
+   - ربط كامل لكافة أحداث التحكم: `play`, `pause`, `seekto`, `seekforward`, `seekbackward`, `previoustrack`, `nexttrack`, `stop`.
+   - استدعاء `setPositionState` دورياً لمزامنة شريط الوقت والكبسولة التفاعلية في نظام أندرويد.
+
+3. **خدمة الفحص التلقائي للمجلدات `folderScanner.ts`**:
+   - إدارة `FileSystemDirectoryHandle` في IndexedDB لتخزين تصريح المجلد.
+   - دالة الفحص السريع `scanAudioDirectory(handle)` التي تستخرج ملفات الصوت بصيغ `mp3`, `wav`, `flac`, `m4a`, `ogg`, `aac`.
+   - دمج تلقائي للملفات الجديدة وإضافتها إلى IndexedDB دون تكرار.
+   - زر مزامنة تفاعلي وبديل `webkitdirectory` سلس.
+
+4. **إزالة منزلقات الصوت المزدوجة وتوحيد واجهة المستخدم**:
+   - إزالة أشرطة التحكم بمستوى الصوت الداخلي من `PlayerBar.tsx` و `LiquidNowPlayingModal.tsx` و `SettingsScreen.tsx`.
+   - استبدالها بمؤشر نقي يوضح أن الصوت موحد مع أزرار الهاتف الفعلية (`System Volume Synchronized`).
+
+5. **تضمين الأصول للعمل بدون إنترنت 100% (Offline PWA)**:
+   - تحديث `index.html` لإزالة الروابط الخارجية واستخدام حزم الخطوط المحلية الأنيقة.
+   - إعداد ملف التكوين ومستشعر حالة الاتصال وزر التثبيت `PWAInstallButton`.

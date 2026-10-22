@@ -49,8 +49,8 @@ export const defaultThemeConfig: ThemeConfig = {
 };
 
 export const defaultAudioSettings: AudioSettings = {
-  volume: 85,
-  volumeBoost: 100, // 100% normal
+  volume: 100,
+  volumeBoost: 100, // 100% Unity Gain (System Volume Synced)
   playbackRate: 1.0,
   repeatMode: 'all',
   isShuffle: false,
