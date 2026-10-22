@@ -1,4 +1,4 @@
-name: Build Native Android APK
+name: Build Android APK
 
 on:
   workflow_dispatch:
@@ -7,354 +7,152 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Dependencies
+        run: npm install --legacy-peer-deps --force
+
+      - name: Build Web Assets
+        run: npm run build
+
+      - name: Setup Capacitor Android
+        run: |
+          npm install @capacitor/core @capacitor/cli @capacitor/android --legacy-peer-deps
+          npx cap init "SoundPulse Pro" "com.soundpulse.app" --web-dir dist
+          npx cap add android
+          npx cap sync android
+
+      - name: Add Storage Permissions to Manifest
+        run: |
+          sed -i '/<\/manifest>/i \    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />' android/app/src/main/AndroidManifest.xml
+
+      - name: Inject Media Scanner Plugin
+        run: |
+          cat << 'EOF' > android/app/src/main/java/com/soundpulse/app/MediaScannerPlugin.java
+          package com.soundpulse.app;
+
+          import android.Manifest;
+          import android.content.ContentUris;
+          import android.database.Cursor;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.provider.MediaStore;
+          import com.getcapacitor.JSArray;
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+          import com.getcapacitor.annotation.Permission;
+          import com.getcapacitor.annotation.PermissionCallback;
+
+          @CapacitorPlugin(
+              name = "MediaScanner",
+              permissions = {
+                  @Permission(strings = { Manifest.permission.READ_MEDIA_AUDIO }, alias = "audio"),
+                  @Permission(strings = { Manifest.permission.READ_EXTERNAL_STORAGE }, alias = "storage")
+              }
+          )
+          public class MediaScannerPlugin extends Plugin {
+
+              @PluginMethod
+              public void scanAudioFiles(PluginCall call) {
+                  String permAlias = (Build.VERSION.SDK_INT >= 33) ? "audio" : "storage";
+                  if (getPermissionState(permAlias) != com.getcapacitor.PermissionState.GRANTED) {
+                      requestPermissionForAlias(permAlias, call, "permCallback");
+                  } else {
+                      queryDeviceAudio(call);
+                  }
+              }
+
+              @PermissionCallback
+              private void permCallback(PluginCall call) {
+                  queryDeviceAudio(call);
+              }
+
+              private void queryDeviceAudio(PluginCall call) {
+                  JSArray tracks = new JSArray();
+                  Uri uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI;
+                  String selection = MediaStore.Audio.Media.IS_MUSIC + " != 0";
+
+                  String[] projection = {
+                      MediaStore.Audio.Media._ID,
+                      MediaStore.Audio.Media.TITLE,
+                      MediaStore.Audio.Media.ARTIST,
+                      MediaStore.Audio.Media.DURATION
+                  };
+
+                  try (Cursor cursor = getContext().getContentResolver().query(uri, projection, selection, null, MediaStore.Audio.Media.TITLE + " ASC")) {
+                      if (cursor != null) {
+                          int idCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID);
+                          int titleCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE);
+                          int artistCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST);
+                          int durCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION);
+
+                          while (cursor.moveToNext()) {
+                              long id = cursor.getLong(idCol);
+                              String title = cursor.getString(titleCol);
+                              String artist = cursor.getString(artistCol);
+                              long duration = cursor.getLong(durCol);
+
+                              Uri contentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id);
+
+                              JSObject track = new JSObject();
+                              track.put("id", String.valueOf(id));
+                              track.put("title", title != null ? title : "Audio Track");
+                              track.put("artist", (artist != null && !artist.equals("<unknown>")) ? artist : "Unknown Artist");
+                              track.put("url", contentUri.toString());
+                              track.put("duration", duration / 1000);
+                              tracks.put(track);
+                          }
+                      }
+                  } catch (Exception e) {
+                      call.reject("Error scanning: " + e.getMessage());
+                      return;
+                  }
+
+                  JSObject result = new JSObject();
+                  result.put("tracks", tracks);
+                  call.resolve(result);
+              }
+          }
+          EOF
+
+          cat << 'EOF' > android/app/src/main/java/com/soundpulse/app/MainActivity.java
+          package com.soundpulse.app;
+
+          import android.os.Bundle;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  registerPlugin(MediaScannerPlugin.class);
+                  super.onCreate(savedInstanceState);
+              }
+          }
+          EOF
+
       - name: Setup Java JDK
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: '17'
+          java-version: '21'
 
-      - name: Setup Specific Gradle 8.4
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.4'
-
-      - name: Scaffold Clean Native Android Project
+      - name: Build APK with Gradle
         run: |
-          rm -rf * || true
-          mkdir -p app/src/main/java/com/soundpulse/nativeplayer
-          mkdir -p app/src/main/res/values
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
 
-          # 1. settings.gradle
-          cat << 'EOF' > settings.gradle
-          pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
-          }
-          dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-          rootProject.name = "SoundPulseNative"
-          include ':app'
-          EOF
-
-          # 2. build.gradle الرئيسي
-          cat << 'EOF' > build.gradle
-          plugins {
-              id 'com.android.application' version '8.2.2' apply false
-              id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
-          }
-          EOF
-
-          # 3. app/build.gradle
-          cat << 'EOF' > app/build.gradle
-          plugins {
-              id 'com.android.application'
-              id 'org.jetbrains.kotlin.android'
-          }
-
-          android {
-              namespace 'com.soundpulse.nativeplayer'
-              compileSdk 34
-
-              defaultConfig {
-                  applicationId "com.soundpulse.nativeplayer"
-                  minSdk 26
-                  targetSdk 34
-                  versionCode 1
-                  versionName "1.0"
-              }
-
-              buildFeatures {
-                  compose true
-              }
-              composeOptions {
-                  kotlinCompilerExtensionVersion '1.5.8'
-              }
-              compileOptions {
-                  sourceCompatibility JavaVersion.VERSION_17
-                  targetCompatibility JavaVersion.VERSION_17
-              }
-              kotlinOptions {
-                  jvmTarget = '17'
-              }
-          }
-
-          dependencies {
-              implementation 'androidx.core:core-ktx:1.12.0'
-              implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
-              implementation 'androidx.activity:activity-compose:1.8.2'
-              implementation platform('androidx.compose:compose-bom:2024.02.00')
-              implementation 'androidx.compose.ui:ui'
-              implementation 'androidx.compose.material3:material3'
-              implementation 'androidx.compose.material:material-icons-extended'
-              implementation 'androidx.media3:media3-exoplayer:1.2.1'
-              implementation 'androidx.media3:media3-session:1.2.1'
-          }
-          EOF
-
-          # 4. AndroidManifest.xml
-          cat << 'EOF' > app/src/main/AndroidManifest.xml
-          <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
-              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-              <uses-permission android:name="android.permission.WAKE_LOCK" />
-
-              <application
-                  android:allowBackup="true"
-                  android:label="SoundPulse Native"
-                  android:theme="@android:style/Theme.Material.NoActionBar">
-                  <activity
-                      android:name=".MainActivity"
-                      android:exported="true">
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN" />
-                          <category android:name="android.intent.category.LAUNCHER" />
-                      </intent-filter>
-                  </activity>
-                  <service
-                      android:name=".PlaybackService"
-                      android:exported="true"
-                      android:foregroundServiceType="mediaPlayback">
-                      <intent-filter>
-                          <action android:name="androidx.media3.session.MediaSessionService" />
-                      </intent-filter>
-                  </service>
-              </application>
-          </manifest>
-          EOF
-
-          # 5. PlaybackService.kt
-          cat << 'EOF' > app/src/main/java/com/soundpulse/nativeplayer/PlaybackService.kt
-          package com.soundpulse.nativeplayer
-
-          import androidx.media3.common.AudioAttributes
-          import androidx.media3.common.C
-          import androidx.media3.exoplayer.ExoPlayer
-          import androidx.media3.session.MediaSession
-          import androidx.media3.session.MediaSessionService
-
-          class PlaybackService : MediaSessionService() {
-              private var mediaSession: MediaSession? = null
-
-              override fun onCreate() {
-                  super.onCreate()
-                  val player = ExoPlayer.Builder(this)
-                      .setAudioAttributes(
-                          AudioAttributes.Builder()
-                              .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-                              .setUsage(C.USAGE_MEDIA)
-                              .build(),
-                          true
-                      )
-                      .build()
-                  mediaSession = MediaSession.Builder(this, player).build()
-              }
-
-              override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
-
-              override fun onDestroy() {
-                  mediaSession?.run {
-                      player.release()
-                      release()
-                      mediaSession = null
-                  }
-                  super.onDestroy()
-              }
-          }
-          EOF
-
-          # 6. MainActivity.kt
-          cat << 'EOF' > app/src/main/java/com/soundpulse/nativeplayer/MainActivity.kt
-          package com.soundpulse.nativeplayer
-
-          import android.Manifest
-          import android.content.ComponentName
-          import android.content.ContentUris
-          import android.content.pm.PackageManager
-          import android.net.Uri
-          import android.os.Build
-          import android.os.Bundle
-          import android.provider.MediaStore
-          import androidx.activity.ComponentActivity
-          import androidx.activity.compose.rememberLauncherForActivityResult
-          import androidx.activity.compose.setContent
-          import androidx.activity.result.contract.ActivityResultContracts
-          import androidx.compose.foundation.background
-          import androidx.compose.foundation.clickable
-          import androidx.compose.foundation.layout.*
-          import androidx.compose.foundation.lazy.LazyColumn
-          import androidx.compose.foundation.lazy.items
-          import androidx.compose.foundation.shape.RoundedCornerShape
-          import androidx.compose.material.icons.Icons
-          import androidx.compose.material.icons.filled.MusicNote
-          import androidx.compose.material.icons.filled.PlayArrow
-          import androidx.compose.material3.*
-          import androidx.compose.runtime.*
-          import androidx.compose.ui.Alignment
-          import androidx.compose.ui.Modifier
-          import androidx.compose.ui.graphics.Color
-          import androidx.compose.ui.text.font.FontWeight
-          import androidx.compose.ui.unit.dp
-          import androidx.compose.ui.unit.sp
-          import androidx.core.content.ContextCompat
-          import androidx.media3.common.MediaItem
-          import androidx.media3.common.MediaMetadata
-          import androidx.media3.session.MediaController
-          import androidx.media3.session.SessionToken
-          import com.google.common.util.concurrent.MoreExecutors
-          import kotlinx.coroutines.Dispatchers
-          import kotlinx.coroutines.launch
-          import kotlinx.coroutines.withContext
-
-          data class AudioTrack(val id: Long, val title: String, val artist: String, val uri: Uri)
-
-          class MainActivity : ComponentActivity() {
-              private var controller: MediaController? = null
-
-              override fun onCreate(savedInstanceState: Bundle?) {
-                  super.onCreate(savedInstanceState)
-                  val sessionToken = SessionToken(this, ComponentName(this, PlaybackService::class.java))
-                  val controllerFuture = MediaController.Builder(this, sessionToken).buildAsync()
-                  controllerFuture.addListener({
-                      controller = controllerFuture.get()
-                  }, MoreExecutors.directExecutor())
-
-                  setContent {
-                      MaterialTheme(colorScheme = darkColorScheme(background = Color(0xFF0F172A), surface = Color(0xFF1E293B))) {
-                          Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                              PlayerScreen(
-                                  onPlay = { track ->
-                                      controller?.let { p ->
-                                          val item = MediaItem.Builder()
-                                              .setUri(track.uri)
-                                              .setMediaMetadata(
-                                                  MediaMetadata.Builder()
-                                                      .setTitle(track.title)
-                                                      .setArtist(track.artist)
-                                                      .build()
-                                              ).build()
-                                          p.setMediaItem(item)
-                                          p.prepare()
-                                          p.play()
-                                      }
-                                  }
-                              )
-                          }
-                      }
-                  }
-              }
-          }
-
-          @Composable
-          fun PlayerScreen(onPlay: (AudioTrack) -> Unit) {
-              var tracks by remember { mutableStateOf<List<AudioTrack>>(emptyList()) }
-              var isScanning by remember { mutableStateOf(false) }
-              var progress by remember { mutableStateOf(0) }
-              var totalCount by remember { mutableStateOf(0) }
-              val context = androidx.compose.ui.platform.LocalContext.current
-              val scope = rememberCoroutineScope()
-
-              fun startScan() {
-                  scope.launch {
-                      isScanning = true
-                      val list = mutableListOf<AudioTrack>()
-                      withContext(Dispatchers.IO) {
-                          val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-                          val sel = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
-                          val cursor = context.contentResolver.query(uri, null, sel, null, null)
-                          cursor?.use {
-                              val total = it.count
-                              totalCount = total
-                              val idCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
-                              val titleCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
-                              val artistCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
-                              var cur = 0
-                              while (it.moveToNext()) {
-                                  cur++
-                                  val id = it.getLong(idCol)
-                                  val title = it.getString(titleCol) ?: "مقطع صوتي"
-                                  val artist = it.getString(artistCol) ?: "غير معروف"
-                                  val trackUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
-                                  list.add(AudioTrack(id, title, artist, trackUri))
-                                  progress = if (total > 0) ((cur.toFloat() / total) * 100).toInt() else 100
-                              }
-                          }
-                      }
-                      tracks = list
-                      isScanning = false
-                  }
-              }
-
-              val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-                  if (granted) startScan()
-              }
-
-              LaunchedEffect(Unit) {
-                  val perm = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
-                  if (ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED) {
-                      startScan()
-                  } else {
-                      launcher.launch(perm)
-                  }
-              }
-
-              if (isScanning) {
-                  Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                      Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                          CircularProgressIndicator(color = Color(0xFF38BDF8))
-                          Spacer(modifier = Modifier.height(16.dp))
-                          Text("جاري فحص الموسيقى... $progress%", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                          Text("تم التعرف على $totalCount ملف", color = Color.Gray, fontSize = 13.sp)
-                      }
-                  }
-              } else {
-                  Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-                      Text("SoundPulse Native Pro", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                      Text("إجمالي الأغاني: ${tracks.size}", fontSize = 14.sp, color = Color(0xFF94A3B8))
-                      Spacer(modifier = Modifier.height(12.dp))
-
-                      LazyColumn(modifier = Modifier.fillMaxSize()) {
-                          items(tracks) { item ->
-                              Row(
-                                  modifier = Modifier
-                                      .fillMaxWidth()
-                                      .padding(vertical = 4.dp)
-                                      .background(Color(0xFF1E293B), RoundedCornerShape(8.dp))
-                                      .clickable { onPlay(item) }
-                                      .padding(12.dp),
-                                  verticalAlignment = Alignment.CenterVertically
-                              ) {
-                                  Icon(Icons.Default.MusicNote, contentDescription = null, tint = Color(0xFF38BDF8))
-                                  Spacer(modifier = Modifier.width(12.dp))
-                                  Column(modifier = Modifier.weight(1f)) {
-                                      Text(item.title, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                                      Text(item.artist, color = Color.Gray, fontSize = 12.sp, maxLines = 1)
-                                  }
-                                  Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White)
-                              }
-                          }
-                      }
-                  }
-              }
-          }
-          EOF
-
-      - name: Build Native APK
-        run: |
-          gradle assembleDebug --no-daemon
-
-      - name: Upload Native APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: SoundPulse-Native-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: SoundPulse-Pro-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
