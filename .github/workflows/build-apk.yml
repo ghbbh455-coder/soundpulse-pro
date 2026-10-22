@@ -13,15 +13,20 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Scaffold Native Kotlin Android Project
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Accept Android Licenses
         run: |
-          rm -rf * .github/workflows/build-apk.yml.bak || true
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+
+      - name: Scaffold Clean Native Android Project
+        run: |
+          rm -rf * || true
           mkdir -p app/src/main/java/com/soundpulse/nativeplayer
           mkdir -p app/src/main/res/values
-          mkdir -p app/src/main/res/mipmap-hdpi
-          mkdir -p gradle/wrapper
 
-          # 1. إعداد Gradle Wrapper
+          # 1. settings.gradle
           cat << 'EOF' > settings.gradle
           pluginManagement {
               repositories {
@@ -41,15 +46,15 @@ jobs:
           include ':app'
           EOF
 
-          # 2. إعداد build.gradle الرئيسي
+          # 2. root build.gradle
           cat << 'EOF' > build.gradle
           plugins {
-              id 'com.android.application' version '8.2.2' apply false
-              id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
+              id 'com.android.application' version '8.1.4' apply false
+              id 'org.jetbrains.kotlin.android' version '1.9.0' apply false
           }
           EOF
 
-          # 3. إعداد app/build.gradle مع مكتبات Media3 و Compose
+          # 3. app/build.gradle
           cat << 'EOF' > app/build.gradle
           plugins {
               id 'com.android.application'
@@ -72,7 +77,7 @@ jobs:
                   compose true
               }
               composeOptions {
-                  kotlinCompilerExtensionVersion '1.5.8'
+                  kotlinCompilerExtensionVersion '1.5.1'
               }
               compileOptions {
                   sourceCompatibility JavaVersion.VERSION_17
@@ -85,20 +90,17 @@ jobs:
 
           dependencies {
               implementation 'androidx.core:core-ktx:1.12.0'
-              implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
               implementation 'androidx.activity:activity-compose:1.8.2'
-              implementation platform('androidx.compose:compose-bom:2024.02.00')
+              implementation platform('androidx.compose:compose-bom:2023.08.00')
               implementation 'androidx.compose.ui:ui'
               implementation 'androidx.compose.material3:material3'
               implementation 'androidx.compose.material:material-icons-extended'
-              
-              implementation 'androidx.media3:media3-exoplayer:1.2.1'
-              implementation 'androidx.media3:media3-session:1.2.1'
-              implementation 'androidx.media3:media3-ui:1.2.1'
+              implementation 'androidx.media3:media3-exoplayer:1.2.0'
+              implementation 'androidx.media3:media3-session:1.2.0'
           }
           EOF
 
-          # 4. ملف AndroidManifest.xml الأصلي
+          # 4. AndroidManifest.xml
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -110,10 +112,8 @@ jobs:
 
               <application
                   android:allowBackup="true"
-                  android:icon="@android:drawable/ic_media_play"
                   android:label="SoundPulse Native"
                   android:theme="@android:style/Theme.Material.NoActionBar">
-                  
                   <activity
                       android:name=".MainActivity"
                       android:exported="true">
@@ -122,7 +122,6 @@ jobs:
                           <category android:name="android.intent.category.LAUNCHER" />
                       </intent-filter>
                   </activity>
-
                   <service
                       android:name=".PlaybackService"
                       android:exported="true"
@@ -135,11 +134,10 @@ jobs:
           </manifest>
           EOF
 
-          # 5. خدمة التشغيل الأصلية في الخلفية (PlaybackService.kt)
+          # 5. PlaybackService.kt (Infinix Dynamic Bar & Background Service)
           cat << 'EOF' > app/src/main/java/com/soundpulse/nativeplayer/PlaybackService.kt
           package com.soundpulse.nativeplayer
 
-          import android.content.Intent
           import androidx.media3.common.AudioAttributes
           import androidx.media3.common.C
           import androidx.media3.exoplayer.ExoPlayer
@@ -160,7 +158,6 @@ jobs:
                           true
                       )
                       .build()
-
                   mediaSession = MediaSession.Builder(this, player).build()
               }
 
@@ -177,7 +174,7 @@ jobs:
           }
           EOF
 
-          # 6. واجهة التطبيق وكود فحص الذاكرة (MainActivity.kt)
+          # 6. MainActivity.kt (Auto Scanner with % Indicator)
           cat << 'EOF' > app/src/main/java/com/soundpulse/nativeplayer/MainActivity.kt
           package com.soundpulse.nativeplayer
 
@@ -200,9 +197,8 @@ jobs:
           import androidx.compose.foundation.lazy.items
           import androidx.compose.foundation.shape.RoundedCornerShape
           import androidx.compose.material.icons.Icons
-          import androidx.compose.material.icons.filled.PlayArrow
-          import androidx.compose.material.icons.filled.Pause
           import androidx.compose.material.icons.filled.MusicNote
+          import androidx.compose.material.icons.filled.PlayArrow
           import androidx.compose.material3.*
           import androidx.compose.runtime.*
           import androidx.compose.ui.Alignment
@@ -228,7 +224,6 @@ jobs:
 
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
-
                   val sessionToken = SessionToken(this, ComponentName(this, PlaybackService::class.java))
                   val controllerFuture = MediaController.Builder(this, sessionToken).buildAsync()
                   controllerFuture.addListener({
@@ -238,9 +233,9 @@ jobs:
                   setContent {
                       MaterialTheme(colorScheme = darkColorScheme(background = Color(0xFF0F172A), surface = Color(0xFF1E293B))) {
                           Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                              MainScreen(
-                                  onPlayTrack = { track ->
-                                      controller?.let { player ->
+                              PlayerScreen(
+                                  onPlay = { track ->
+                                      controller?.let { p ->
                                           val item = MediaItem.Builder()
                                               .setUri(track.uri)
                                               .setMediaMetadata(
@@ -248,15 +243,11 @@ jobs:
                                                       .setTitle(track.title)
                                                       .setArtist(track.artist)
                                                       .build()
-                                              )
-                                              .build()
-                                          player.setMediaItem(item)
-                                          player.prepare()
-                                          player.play()
+                                              ).build()
+                                          p.setMediaItem(item)
+                                          p.prepare()
+                                          p.play()
                                       }
-                                  },
-                                  onTogglePlayPause = {
-                                      controller?.let { if (it.isPlaying) it.pause() else it.play() }
                                   }
                               )
                           }
@@ -266,38 +257,37 @@ jobs:
           }
 
           @Composable
-          fun MainScreen(onPlayTrack: (AudioTrack) -> Unit, onTogglePlayPause: () -> Unit) {
+          fun PlayerScreen(onPlay: (AudioTrack) -> Unit) {
               var tracks by remember { mutableStateOf<List<AudioTrack>>(emptyList()) }
               var isScanning by remember { mutableStateOf(false) }
-              var scanProgress by remember { mutableStateOf(0) }
-              var scanTotal by remember { mutableStateOf(0) }
-              var currentPlaying by remember { mutableStateOf<AudioTrack?>(null) }
+              var progress by remember { mutableStateOf(0) }
+              var totalCount by remember { mutableStateOf(0) }
               val context = androidx.compose.ui.platform.LocalContext.current
               val scope = rememberCoroutineScope()
 
-              fun scanMedia() {
+              fun startScan() {
                   scope.launch {
                       isScanning = true
                       val list = mutableListOf<AudioTrack>()
                       withContext(Dispatchers.IO) {
                           val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-                          val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
-                          val cursor = context.contentResolver.query(uri, null, selection, null, null)
+                          val sel = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
+                          val cursor = context.contentResolver.query(uri, null, sel, null, null)
                           cursor?.use {
                               val total = it.count
-                              scanTotal = total
+                              totalCount = total
                               val idCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
                               val titleCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
                               val artistCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
-                              var count = 0
+                              var cur = 0
                               while (it.moveToNext()) {
-                                  count++
+                                  cur++
                                   val id = it.getLong(idCol)
-                                  val title = it.getString(titleCol) ?: "Unknown Title"
-                                  val artist = it.getString(artistCol) ?: "Unknown Artist"
+                                  val title = it.getString(titleCol) ?: "مقطع صوتي"
+                                  val artist = it.getString(artistCol) ?: "غير معروف"
                                   val trackUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
                                   list.add(AudioTrack(id, title, artist, trackUri))
-                                  scanProgress = ((count.toFloat() / total) * 100).toInt()
+                                  progress = if (total > 0) ((cur.toFloat() / total) * 100).toInt() else 100
                               }
                           }
                       }
@@ -306,18 +296,16 @@ jobs:
                   }
               }
 
-              val permissionLauncher = rememberLauncherForActivityResult(
-                  contract = ActivityResultContracts.RequestPermission()
-              ) { isGranted ->
-                  if (isGranted) scanMedia()
+              val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+                  if (granted) startScan()
               }
 
               LaunchedEffect(Unit) {
                   val perm = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
                   if (ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED) {
-                      scanMedia()
+                      startScan()
                   } else {
-                      permissionLauncher.launch(perm)
+                      launcher.launch(perm)
                   }
               }
 
@@ -326,56 +314,34 @@ jobs:
                       Column(horizontalAlignment = Alignment.CenterHorizontally) {
                           CircularProgressIndicator(color = Color(0xFF38BDF8))
                           Spacer(modifier = Modifier.height(16.dp))
-                          Text("جاري فحص ملفات الصوت... $scanProgress%", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                          Text("تم مسح $scanTotal ملف", color = Color.Gray, fontSize = 13.sp)
+                          Text("جاري فحص الموسيقى... $progress%", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                          Text("تم التعرف على $totalCount ملف", color = Color.Gray, fontSize = 13.sp)
                       }
                   }
               } else {
                   Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
                       Text("SoundPulse Native Pro", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                      Text("عدد الأغاني المتاحة: ${tracks.size}", fontSize = 14.sp, color = Color(0xFF94A3B8))
+                      Text("إجمالي الأغاني: ${tracks.size}", fontSize = 14.sp, color = Color(0xFF94A3B8))
                       Spacer(modifier = Modifier.height(12.dp))
 
-                      LazyColumn(modifier = Modifier.weight(1f)) {
-                          items(tracks) { track ->
+                      LazyColumn(modifier = Modifier.fillMaxSize()) {
+                          items(tracks) { item ->
                               Row(
                                   modifier = Modifier
                                       .fillMaxWidth()
                                       .padding(vertical = 4.dp)
                                       .background(Color(0xFF1E293B), RoundedCornerShape(8.dp))
-                                      .clickable {
-                                          currentPlaying = track
-                                          onPlayTrack(track)
-                                      }
+                                      .clickable { onPlay(item) }
                                       .padding(12.dp),
                                   verticalAlignment = Alignment.CenterVertically
                               ) {
                                   Icon(Icons.Default.MusicNote, contentDescription = null, tint = Color(0xFF38BDF8))
                                   Spacer(modifier = Modifier.width(12.dp))
                                   Column(modifier = Modifier.weight(1f)) {
-                                      Text(track.title, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                                      Text(track.artist, color = Color.Gray, fontSize = 12.sp, maxLines = 1)
+                                      Text(item.title, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                      Text(item.artist, color = Color.Gray, fontSize = 12.sp, maxLines = 1)
                                   }
-                              }
-                          }
-                      }
-
-                      currentPlaying?.let { track ->
-                          Card(
-                              modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                              colors = CardDefaults.cardColors(containerColor = Color(0xFF0284C7))
-                          ) {
-                              Row(
-                                  modifier = Modifier.padding(14.dp),
-                                  verticalAlignment = Alignment.CenterVertically
-                              ) {
-                                  Column(modifier = Modifier.weight(1f)) {
-                                      Text(track.title, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1)
-                                      Text(track.artist, color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp)
-                                  }
-                                  IconButton(onClick = onTogglePlayPause) {
-                                      Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White)
-                                  }
+                                  Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White)
                               }
                           }
                       }
@@ -384,11 +350,9 @@ jobs:
           }
           EOF
 
-      - name: Build Native APK with Gradle
+      - name: Build Native APK
         run: |
-          gradle wrapper --gradle-version 8.4
-          chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace
+          gradle assembleDebug --no-daemon
 
       - name: Upload Native APK
         uses: actions/upload-artifact@v4
