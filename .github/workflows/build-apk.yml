@@ -21,18 +21,28 @@ jobs:
       - name: Build Web Assets
         run: npm run build
 
-      - name: Setup Capacitor Android
+      - name: Setup Capacitor with JSON Config (Bypass TS Error)
         run: |
           npm install @capacitor/core @capacitor/cli @capacitor/android --legacy-peer-deps
-          npx cap init "SoundPulse Pro" "com.soundpulse.app" --web-dir dist
+          # كتابة ملف الإعدادات بصيغة JSON لمنع خطأ CommonJS و TypeScript نهائياً
+          cat << 'EOF' > capacitor.config.json
+          {
+            "appId": "com.soundpulse.app",
+            "appName": "SoundPulse Pro",
+            "webDir": "dist",
+            "bundledWebRuntime": false
+          }
+          EOF
+          rm -f capacitor.config.ts capacitor.config.js || true
           npx cap add android
           npx cap sync android
 
-      - name: Add Storage Permissions to Manifest
+      - name: Add Storage Permissions to AndroidManifest
         run: |
-          sed -i '/<\/manifest>/i \    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />' android/app/src/main/AndroidManifest.xml
+          sed -i '/<\/manifest>/i \    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />' android/app/src/main/AndroidManifest.xml
+          sed -i 's/<application/<application android:requestLegacyExternalStorage="true"/' android/app/src/main/AndroidManifest.xml
 
-      - name: Inject Media Scanner Plugin
+      - name: Inject Native Audio Scanner Plugin
         run: |
           cat << 'EOF' > android/app/src/main/java/com/soundpulse/app/MediaScannerPlugin.java
           package com.soundpulse.app;
@@ -85,7 +95,8 @@ jobs:
                       MediaStore.Audio.Media._ID,
                       MediaStore.Audio.Media.TITLE,
                       MediaStore.Audio.Media.ARTIST,
-                      MediaStore.Audio.Media.DURATION
+                      MediaStore.Audio.Media.DURATION,
+                      MediaStore.Audio.Media.DATA
                   };
 
                   try (Cursor cursor = getContext().getContentResolver().query(uri, projection, selection, null, MediaStore.Audio.Media.TITLE + " ASC")) {
@@ -94,22 +105,34 @@ jobs:
                           int titleCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE);
                           int artistCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST);
                           int durCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION);
+                          int dataCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA);
+
+                          int total = cursor.getCount();
+                          int current = 0;
 
                           while (cursor.moveToNext()) {
+                              current++;
                               long id = cursor.getLong(idCol);
                               String title = cursor.getString(titleCol);
                               String artist = cursor.getString(artistCol);
                               long duration = cursor.getLong(durCol);
-
-                              Uri contentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id);
+                              String dataPath = cursor.getString(dataCol);
 
                               JSObject track = new JSObject();
                               track.put("id", String.valueOf(id));
-                              track.put("title", title != null ? title : "Audio Track");
+                              track.put("title", (title != null && !title.isEmpty()) ? title : "Audio Track");
                               track.put("artist", (artist != null && !artist.equals("<unknown>")) ? artist : "Unknown Artist");
-                              track.put("url", contentUri.toString());
+                              track.put("url", "file://" + dataPath);
                               track.put("duration", duration / 1000);
                               tracks.put(track);
+
+                              if (current % 15 == 0 || current == total) {
+                                  JSObject prog = new JSObject();
+                                  prog.put("progress", (int) ((current / (float) total) * 100));
+                                  prog.put("current", current);
+                                  prog.put("total", total);
+                                  notifyListeners("scanProgress", prog);
+                              }
                           }
                       }
                   } catch (Exception e) {
@@ -138,6 +161,173 @@ jobs:
               }
           }
           EOF
+
+      - name: Inject Scanner UI, Anti-Clipping & Dynamic Bar
+        run: |
+          cat << 'EOF' > inject.py
+          import os
+
+          target = 'android/app/src/main/assets/public/index.html'
+          if not os.path.exists(target):
+              for root, dirs, files in os.walk('.'):
+                  if 'index.html' in files and 'node_modules' not in root and 'android' not in root:
+                      target = os.path.join(root, 'index.html')
+                      break
+
+          if os.path.exists(target):
+              with open(target, 'r', encoding='utf-8') as f:
+                  html = f.read()
+
+              snippet = """
+          <style>
+            #soundpulse-loader {
+              position: fixed;
+              inset: 0;
+              background: #0b0f19;
+              color: #f8fafc;
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justify-content: center;
+              z-index: 999999;
+              font-family: system-ui, -apple-system, sans-serif;
+              transition: opacity 0.4s ease;
+            }
+            .sp-spinner {
+              width: 48px;
+              height: 48px;
+              border: 4px solid rgba(56, 189, 248, 0.2);
+              border-top-color: #38bdf8;
+              border-radius: 50%;
+              animation: sp-spin 0.8s linear infinite;
+              margin-bottom: 16px;
+            }
+            @keyframes sp-spin { to { transform: rotate(360deg); } }
+            .sp-bar-container {
+              width: 240px;
+              height: 6px;
+              background: #1e293b;
+              border-radius: 999px;
+              overflow: hidden;
+              margin-top: 14px;
+            }
+            #sp-progress-fill {
+              width: 0%;
+              height: 100%;
+              background: #38bdf8;
+              transition: width 0.2s ease;
+            }
+          </style>
+          <div id="soundpulse-loader">
+            <div class="sp-spinner"></div>
+            <div style="font-weight: 600; font-size: 16px;">جاري فحص ملفات الموسيقى...</div>
+            <div id="sp-progress-text" style="font-size: 13px; color: #94a3b8; margin-top: 6px;">0%</div>
+            <div class="sp-bar-container">
+              <div id="sp-progress-fill"></div>
+            </div>
+          </div>
+          <script>
+            window.addEventListener('DOMContentLoaded', function() {
+              const loader = document.getElementById('soundpulse-loader');
+              const fill = document.getElementById('sp-progress-fill');
+              const txt = document.getElementById('sp-progress-text');
+
+              function hideLoader() {
+                if (loader) {
+                  loader.style.opacity = '0';
+                  setTimeout(() => { loader.style.display = 'none'; }, 400);
+                }
+              }
+
+              function startScan() {
+                if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.MediaScanner) {
+                  const scanner = window.Capacitor.Plugins.MediaScanner;
+                  scanner.addListener('scanProgress', (data) => {
+                    if (data && data.progress !== undefined) {
+                      fill.style.width = data.progress + '%';
+                      txt.innerText = data.progress + '% (' + data.current + ' / ' + data.total + ')';
+                    }
+                  });
+
+                  scanner.scanAudioFiles().then((res) => {
+                    fill.style.width = '100%';
+                    txt.innerText = '100%';
+                    if (res && res.tracks && res.tracks.length > 0) {
+                      window.__LOCAL_TRACKS__ = res.tracks;
+                      window.dispatchEvent(new CustomEvent('soundpulse:tracks-loaded', { detail: res.tracks }));
+                    }
+                    setTimeout(hideLoader, 500);
+                  }).catch(() => hideLoader());
+                } else {
+                  setTimeout(startScan, 400);
+                }
+              }
+              startScan();
+
+              // محدد الذروة ومنع الخرفشة (Anti-Clipping Limiter)
+              let ctx = null;
+              function applyLimiter(audio) {
+                try {
+                  const AC = window.AudioContext || window.webkitAudioContext;
+                  if (!AC) return;
+                  if (!ctx) ctx = new AC();
+                  if (ctx.state === 'suspended') ctx.resume();
+
+                  const source = ctx.createMediaElementSource(audio);
+                  const hp = ctx.createBiquadFilter();
+                  hp.type = 'highpass';
+                  hp.frequency.setValueAtTime(25, ctx.currentTime);
+
+                  const comp = ctx.createDynamicsCompressor();
+                  comp.threshold.setValueAtTime(-1.0, ctx.currentTime);
+                  comp.knee.setValueAtTime(0.0, ctx.currentTime);
+                  comp.ratio.setValueAtTime(20.0, ctx.currentTime);
+                  comp.attack.setValueAtTime(0.001, ctx.currentTime);
+                  comp.release.setValueAtTime(0.1, ctx.currentTime);
+
+                  source.connect(hp);
+                  hp.connect(comp);
+                  comp.connect(ctx.destination);
+                } catch(e) {}
+              }
+
+              // تفعيل الـ MediaSession للـ Dynamic Bar في إنفينيكس
+              document.addEventListener('play', function(e) {
+                if (e.target && e.target.tagName === 'AUDIO') {
+                  const audio = e.target;
+                  audio.volume = 1.0;
+                  applyLimiter(audio);
+
+                  if ('mediaSession' in navigator) {
+                    navigator.mediaSession.metadata = new MediaMetadata({
+                      title: document.title || 'SoundPulse Track',
+                      artist: 'SoundPulse Pro',
+                      album: 'Offline Local Library'
+                    });
+                    navigator.mediaSession.playbackState = 'playing';
+                    navigator.mediaSession.setActionHandler('play', () => audio.play());
+                    navigator.mediaSession.setActionHandler('pause', () => audio.pause());
+                    navigator.mediaSession.setActionHandler('seekbackward', () => { audio.currentTime -= 10; });
+                    navigator.mediaSession.setActionHandler('seekforward', () => { audio.currentTime += 10; });
+                  }
+                }
+              }, true);
+
+              document.addEventListener('pause', function(e) {
+                if (e.target && e.target.tagName === 'AUDIO' && 'mediaSession' in navigator) {
+                  navigator.mediaSession.playbackState = 'paused';
+                }
+              }, true);
+            });
+          </script>
+          """
+              if '</head>' in html:
+                  html = html.replace('</head>', snippet + '\n</head>')
+                  with open(target, 'w', encoding='utf-8') as f:
+                      f.write(html)
+                  print('Injected successfully!')
+          EOF
+          python3 inject.py
 
       - name: Setup Java JDK
         uses: actions/setup-java@v4
