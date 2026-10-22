@@ -220,4 +220,44 @@ jobs:
                       album: 'Offline Local Library'
                     });
                     navigator.mediaSession.playbackState = 'playing';
-                    navigator.mediaSession.setActionHandler('play',
+                    navigator.mediaSession.setActionHandler('play', function() { audio.play(); });
+                    navigator.mediaSession.setActionHandler('pause', function() { audio.pause(); });
+                    navigator.mediaSession.setActionHandler('seekbackward', function() { audio.currentTime -= 10; });
+                    navigator.mediaSession.setActionHandler('seekforward', function() { audio.currentTime += 10; });
+                  }
+                }
+              }, true);
+
+              document.addEventListener('pause', function(e) {
+                if (e.target && e.target.tagName === 'AUDIO' && 'mediaSession' in navigator) {
+                  navigator.mediaSession.playbackState = 'paused';
+                }
+              }, true);
+            });
+          </script>
+          """
+              if '</head>' in html:
+                  html = html.replace('</head>', auto_script + '\n</head>')
+                  with open(target, 'w', encoding='utf-8') as f:
+                      f.write(html)
+                  print('Injected successfully!')
+          EOF
+          python3 patch_script.py
+
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '21'
+
+      - name: Build APK with Gradle
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundPulse-Pro-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
